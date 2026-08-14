@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from meridian_v3.charges.indian import levy, normalize_broker
+from meridian_v3.storage.repair import align_prices
 from meridian_v3.storage.schema import Fill, Order, Position, PriceCache
 
 
@@ -22,18 +23,32 @@ def decorate_positions(session: Session, rows: list[Position]) -> list[dict]:
         fees = _fees_for(session, row)
         if row.status == "open":
             mark = last if last else avg
-            pnl = _pnl(row.side, avg, mark, row.qty) - fees
-            out.append(_card(row, qty, avg, mark, pnl, "open", fees))
+            avg, mark, _shifted = align_prices(avg, mark, row.market)
+            gross, net = _split(row.side, avg, mark, row.qty, fees)
+            out.append(_card(row, qty, avg, mark, net, "open", fees, gross=gross))
             continue
         exit_px = row.exit_price
-        pnl = row.realized_pnl
-        if exit_px is None or pnl is None:
-            exit_px, pnl = _infer_exit(session, row, avg, qty)
-        if pnl is not None:
-            # realized_pnl already nets the exit fee; still subtract leftover entry fees if stored gross
-            pass
-        out.append(_card(row, qty, avg, exit_px, pnl, "closed", fees))
+        if exit_px is None:
+            exit_px, _ignored = _infer_exit(session, row, avg, qty)
+        avg, exit_px, _shifted = align_prices(avg or 0.0, exit_px or 0.0, row.market)
+        gross, net = _split(row.side, avg, exit_px, qty, fees)
+        out.append(
+            _card(row, qty, avg, exit_px, net, "closed", fees, reason=_exit_reason(session, row), gross=gross)
+        )
     return out
+
+
+def summarize_closed(cards: list[dict]) -> dict:
+    pnls = [float(c["pnl"]) for c in cards if c.get("pnl") is not None]
+    gross = [float(c["gross"]) for c in cards if c.get("gross") is not None]
+    return {
+        "count": len(cards),
+        "wins": sum(1 for p in pnls if p > 0.5),
+        "losses": sum(1 for p in pnls if p < -0.5),
+        "pnl": round(sum(pnls), 2),
+        "gross": round(sum(gross), 2),
+        "fees": round(sum(float(c.get("fees") or 0) for c in cards), 2),
+    }
 
 
 def decorate_fills(rows: list[Fill]) -> list[dict]:
@@ -117,7 +132,29 @@ def _fees_for(session: Session, row: Position) -> float:
     return sum(float(f.fees or 0) for f in session.scalars(q))
 
 
-def _card(row: Position, qty: float, avg: float, mark: float | None, pnl: float | None, kind: str, fees: float) -> dict:
+MARKET_LABELS = {
+    "equity_cash": "Cash",
+    "options_buy": "Opt",
+    "india_futures": "India F",
+    "global_commodities": "Cmdty",
+    "crypto_spot": "Crypto",
+    "crypto_futures": "Crypto F",
+    "crypto_options": "Crypto C",
+    "forex_micro": "FX",
+}
+
+
+def _card(
+    row: Position,
+    qty: float,
+    avg: float,
+    mark: float | None,
+    pnl: float | None,
+    kind: str,
+    fees: float,
+    reason: str = "",
+    gross: float | None = None,
+) -> dict:
     return {
         "id": row.id,
         "venue": row.venue,
@@ -126,16 +163,45 @@ def _card(row: Position, qty: float, avg: float, mark: float | None, pnl: float 
         "qty": qty,
         "avg_buy": avg,
         "current": mark,
+        "gross": gross,
+        "gross_class": _tone(gross),
         "pnl": pnl,
         "pnl_class": _tone(pnl),
         "fees": fees,
         "market": row.market,
+        "market_label": MARKET_LABELS.get(row.market or "", row.market or ""),
         "horizon": row.horizon,
         "status": row.status,
         "kind": kind,
+        "reason": reason,
         "opened_at": row.opened_at,
         "closed_at": row.closed_at,
     }
+
+
+def _split(side: str, avg: float | None, mark: float | None, qty: float, fees: float) -> tuple[float, float]:
+    """Tape P&L (price only) and net after the contract-note bill."""
+    if not avg or not mark or not qty:
+        gross = 0.0
+    else:
+        gross = _pnl(side, avg, mark, qty)
+    return gross, gross - float(fees or 0.0)
+
+
+def _exit_reason(session: Session, row: Position) -> str:
+    if row.status != "closed":
+        return ""
+    exit_side = "sell" if row.side == "buy" else "buy"
+    fill = session.scalar(
+        select(Fill)
+        .where(Fill.symbol == row.symbol, Fill.venue == row.venue, Fill.side == exit_side)
+        .order_by(Fill.filled_at.desc())
+    )
+    note = (fill.note if fill else "") or ""
+    if "EXIT:" in note:
+        body = note.split("EXIT:", 1)[1]
+        return body.split("  P&L")[0].split(" P&L")[0].strip()
+    return ""
 
 
 def _pnl(side: str, avg: float, mark: float, qty: float) -> float:

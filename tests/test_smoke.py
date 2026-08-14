@@ -23,10 +23,13 @@ def test_app_health_and_pages(session):
 
 
 def test_seed_and_cycle(session):
+    from datetime import datetime, timezone
+
     from meridian_v3.pipeline import run_cycle
 
     seed_demo(session, reset=True)
-    result = run_cycle(session)
+    monday = datetime(2026, 8, 17, 5, 45, tzinfo=timezone.utc)
+    result = run_cycle(session, now=monday)
     assert result["decided"] >= 1
     assert result["paper_opened"] >= 1
 

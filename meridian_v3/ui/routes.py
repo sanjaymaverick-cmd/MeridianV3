@@ -15,7 +15,14 @@ from meridian_v3.engine.drawdown import assess_drawdown
 from meridian_v3.ingestion.service import ImportService
 from meridian_v3.autopilot import is_running, last_error, set_paper_auto, tick
 from meridian_v3.charges.indian import BROKER_LABELS, BROKERS, broker_label, normalize_broker
-from meridian_v3.ui.book_view import decorate_fills, decorate_positions, ensure_fill_charges, summarize_charges
+from meridian_v3.storage.repair import repair_shifted_clips
+from meridian_v3.ui.book_view import (
+    decorate_fills,
+    decorate_positions,
+    ensure_fill_charges,
+    summarize_charges,
+    summarize_closed,
+)
 from meridian_v3.pipeline import run_cycle
 from meridian_v3.storage.db import desk_lock
 from meridian_v3.storage.db import get_session
@@ -127,6 +134,7 @@ def book(request: Request):
     session = request.state.session
     broker = _account_broker(session)
     ensure_fill_charges(session, broker)
+    repair_shifted_clips(session)
     session.flush()
     paper = decorate_positions(
         session, list(session.scalars(select(Position).where(Position.venue == "paper").order_by(Position.id.desc())))
@@ -145,8 +153,10 @@ def book(request: Request):
         "book",
         paper_pos=paper_open,
         paper_done=paper_done,
+        paper_settled=summarize_closed(paper_done),
         live_pos=live_open,
         live_done=live_done,
+        live_settled=summarize_closed(live_done),
         fills=decorate_fills(all_fills[:40]),
         charges=summarize_charges(all_fills),
         broker=broker,

@@ -81,9 +81,16 @@ def mark_to_market(session: Session, venue: str = "paper") -> float:
     return acct.equity
 
 
-def run_cycle(session: Session, *, live_armed: bool | None = None) -> dict:
+def run_cycle(
+    session: Session,
+    *,
+    live_armed: bool | None = None,
+    now: datetime | None = None,
+) -> dict:
     settings = get_settings()
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is not None:
+        now = now.astimezone(timezone.utc).replace(tzinfo=None)
     india_open = india_session(now, settings).in_session
     paper_acct = _account(session, "paper")
     live_acct = _account(session, "live")

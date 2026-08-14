@@ -37,6 +37,10 @@ def main(argv: list[str] | None = None) -> int:
         help="Close open India paper clips and return cash for crypto / FX / commodities",
     )
     flat.add_argument("--force", action="store_true", help="Close even if NSE is open")
+    sub.add_parser(
+        "repair-book",
+        help="Rewrite 10x / margin-priced paper fills and recompute honest settled P&L",
+    )
     sub.add_parser("desktop", help="Open MERIDIAN V3 in a native window")
     args = parser.parse_args(argv)
 
@@ -54,6 +58,8 @@ def main(argv: list[str] | None = None) -> int:
         return _arm(on=args.on and not args.off)
     if args.cmd == "flatten-india":
         return _flatten_india(force=args.force)
+    if args.cmd == "repair-book":
+        return _repair_book()
     if args.cmd == "desktop":
         return _desktop()
     return _serve()
@@ -160,6 +166,23 @@ def _flatten_india(*, force: bool) -> int:
             f"closed {out.get('india_closed', 0)} India paper clip(s): {names}. "
             f"Cash back ₹{out.get('india_freed', 0):,.2f}. Paper cash now ₹{out.get('cash', 0):,.2f}."
         )
+        return 0
+    finally:
+        session.close()
+
+
+def _repair_book() -> int:
+    from meridian_v3.pipeline import mark_to_market
+    from meridian_v3.storage.db import desk_lock
+    from meridian_v3.storage.repair import repair_shifted_clips
+
+    session = get_session()
+    try:
+        with desk_lock:
+            n = repair_shifted_clips(session)
+            mark_to_market(session, "paper")
+            session.commit()
+        print(f"repaired {n} paper clip(s). Avg buy is the rupee tape now. Settled P&L was rewritten.")
         return 0
     finally:
         session.close()
