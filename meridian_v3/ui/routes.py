@@ -14,6 +14,7 @@ from meridian_v3.domain.money import format_inr, format_pct
 from meridian_v3.engine.drawdown import assess_drawdown
 from meridian_v3.ingestion.service import ImportService
 from meridian_v3.autopilot import is_running, last_error, set_paper_auto, tick
+from meridian_v3.ui.book_view import decorate_positions
 from meridian_v3.pipeline import run_cycle
 from meridian_v3.storage.db import desk_lock
 from meridian_v3.storage.db import get_session
@@ -96,7 +97,9 @@ def command(request: Request):
     paper_dd = assess_drawdown(paper.equity, paper.peak) if paper else None
     live_dd = assess_drawdown(live.equity, live.peak) if live else None
     signals = list(session.scalars(select(SignalRow).order_by(SignalRow.created_at.desc()).limit(12)))
-    positions = list(session.scalars(select(Position).where(Position.status == "open")))
+    positions = decorate_positions(
+        session, list(session.scalars(select(Position).where(Position.status == "open")))
+    )
     return _render(
         request, "command.html", "command",
         paper_dd=paper_dd, live_dd=live_dd, signals=signals, positions=positions,
@@ -114,10 +117,27 @@ def signals_page(request: Request):
 @router.get("/book", response_class=HTMLResponse)
 def book(request: Request):
     session = request.state.session
-    paper = list(session.scalars(select(Position).where(Position.venue == "paper")))
-    live = list(session.scalars(select(Position).where(Position.venue == "live")))
-    fills = list(session.scalars(select(Fill).order_by(Fill.filled_at.desc()).limit(30)))
-    return _render(request, "book.html", "book", paper_pos=paper, live_pos=live, fills=fills)
+    paper = decorate_positions(
+        session, list(session.scalars(select(Position).where(Position.venue == "paper").order_by(Position.id.desc())))
+    )
+    live = decorate_positions(
+        session, list(session.scalars(select(Position).where(Position.venue == "live").order_by(Position.id.desc())))
+    )
+    paper_open = [p for p in paper if p["status"] == "open"]
+    paper_done = [p for p in paper if p["status"] == "closed"]
+    live_open = [p for p in live if p["status"] == "open"]
+    live_done = [p for p in live if p["status"] == "closed"]
+    fills = list(session.scalars(select(Fill).order_by(Fill.filled_at.desc()).limit(40)))
+    return _render(
+        request,
+        "book.html",
+        "book",
+        paper_pos=paper_open,
+        paper_done=paper_done,
+        live_pos=live_open,
+        live_done=live_done,
+        fills=fills,
+    )
 
 
 @router.get("/review", response_class=HTMLResponse)

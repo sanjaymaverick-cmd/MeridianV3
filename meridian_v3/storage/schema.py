@@ -210,6 +210,9 @@ class Position(Base):
     source: Mapped[str] = mapped_column(String(16), default="auto")
     opened_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    exit_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    realized_pnl: Mapped[float | None] = mapped_column(Float, nullable=True)
+    close_qty: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
 class BeliefRow(Base):

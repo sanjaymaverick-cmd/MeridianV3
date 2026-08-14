@@ -125,7 +125,13 @@ class OrderManager:
         else:
             new_qty = row.qty - qty
             if new_qty <= 1e-9:
+                pnl = (price - row.avg_price) * row.qty
+                if row.side == "sell":
+                    pnl = -pnl
                 row.status = "closed"
+                row.close_qty = row.qty
+                row.exit_price = price
+                row.realized_pnl = pnl
                 row.qty = 0
                 row.closed_at = datetime.now(timezone.utc).replace(tzinfo=None)
             else:
@@ -182,6 +188,9 @@ class OrderManager:
         )
         self.session.add(fill)
         pos.status = "closed"
+        pos.close_qty = pos.qty
+        pos.exit_price = result.avg_price
+        pos.realized_pnl = pnl
         pos.qty = 0
         pos.closed_at = now
         self._touch_account(pos.venue, result)

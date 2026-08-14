@@ -70,6 +70,14 @@ def _migrate(engine) -> None:
                 """
             )
         )
+        pos_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(positions)")).fetchall()}
+        for name, ddl in {
+            "exit_price": "FLOAT",
+            "realized_pnl": "FLOAT",
+            "close_qty": "FLOAT",
+        }.items():
+            if name not in pos_cols:
+                conn.execute(text(f"ALTER TABLE positions ADD COLUMN {name} {ddl}"))
 
 
 def get_session() -> Session:

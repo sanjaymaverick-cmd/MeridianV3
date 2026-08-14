@@ -95,6 +95,8 @@ h1 { font-size: 26px; font-weight: 400; margin: 0 0 8px; }
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-5); }
 .figure { font-family: var(--mono); font-size: 28px; font-variant-numeric: tabular-nums; margin: 0; }
 .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.num.up { color: var(--up); }
+.num.down { color: var(--down); }
 
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th { text-align: left; font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ash); font-weight: 500; padding: 6px 8px; border-bottom: 1px solid var(--line); }

@@ -5,37 +5,91 @@
   <div>
     <p class="kicker">Hybrid book</p>
     <h1>Paper learns. Live is rare.</h1>
-    <p class="lede">The two books never mix. Compare them here. Compounding happens inside each book.</p>
+    <p class="lede">Avg buy is what you paid. Current is the last mark. Settled rows show the exit and the profit or loss next to it.</p>
   </div>
 </section>
 <div class="grid-2">
   <article class="panel">
-    <h2>Paper positions</h2>
+    <h2>Paper — open</h2>
     <table>
-      <thead><tr><th>Name</th><th>Side</th><th>Qty</th><th>Avg</th><th>Status</th></tr></thead>
+      <thead><tr><th>Name</th><th>Side</th><th>Qty</th><th>Avg buy</th><th>Current</th><th>Open P&amp;L</th></tr></thead>
       <tbody>
       {% for p in paper_pos %}
-        <tr><td>{{ p.symbol }}</td><td>{{ p.side }}</td><td class="num">{{ p.qty }}</td><td class="num">{{ p.avg_price | inr }}</td><td>{{ p.status }}</td></tr>
+        <tr>
+          <td>{{ p.symbol }}</td>
+          <td>{{ p.side }}</td>
+          <td class="num">{{ p.qty }}</td>
+          <td class="num">{{ p.avg_buy | inr }}</td>
+          <td class="num">{{ p.current | inr if p.current else '—' }}</td>
+          <td class="num {{ p.pnl_class }}">{{ p.pnl | inr if p.pnl is not none else '—' }}</td>
+        </tr>
       {% else %}
-        <tr><td colspan="5">Empty.</td></tr>
+        <tr><td colspan="6">No open paper clips.</td></tr>
       {% endfor %}
       </tbody>
     </table>
   </article>
   <article class="panel">
-    <h2>Live positions</h2>
+    <h2>Live — open</h2>
     <table>
-      <thead><tr><th>Name</th><th>Side</th><th>Qty</th><th>Avg</th><th>Status</th></tr></thead>
+      <thead><tr><th>Name</th><th>Side</th><th>Qty</th><th>Avg buy</th><th>Current</th><th>Open P&amp;L</th></tr></thead>
       <tbody>
       {% for p in live_pos %}
-        <tr><td>{{ p.symbol }}</td><td>{{ p.side }}</td><td class="num">{{ p.qty }}</td><td class="num">{{ p.avg_price | inr }}</td><td>{{ p.status }}</td></tr>
+        <tr>
+          <td>{{ p.symbol }}</td>
+          <td>{{ p.side }}</td>
+          <td class="num">{{ p.qty }}</td>
+          <td class="num">{{ p.avg_buy | inr }}</td>
+          <td class="num">{{ p.current | inr if p.current else '—' }}</td>
+          <td class="num {{ p.pnl_class }}">{{ p.pnl | inr if p.pnl is not none else '—' }}</td>
+        </tr>
       {% else %}
-        <tr><td colspan="5">Empty. Live stays off until you arm it and a very strong signal appears.</td></tr>
+        <tr><td colspan="6">Empty. Live stays off until you arm it.</td></tr>
       {% endfor %}
       </tbody>
     </table>
   </article>
 </div>
+<article class="panel">
+  <h2>Settled paper trades</h2>
+  <table>
+    <thead><tr><th>Name</th><th>Side</th><th>Qty</th><th>Avg buy</th><th>Exit</th><th>Profit / loss</th></tr></thead>
+    <tbody>
+    {% for p in paper_done %}
+      <tr>
+        <td>{{ p.symbol }}</td>
+        <td>{{ p.side }}</td>
+        <td class="num">{{ p.qty }}</td>
+        <td class="num">{{ p.avg_buy | inr }}</td>
+        <td class="num">{{ p.current | inr if p.current else '—' }}</td>
+        <td class="num {{ p.pnl_class }}">{{ p.pnl | inr if p.pnl is not none else '—' }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6">No settled paper trades yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</article>
+<article class="panel">
+  <h2>Settled live trades</h2>
+  <table>
+    <thead><tr><th>Name</th><th>Side</th><th>Qty</th><th>Avg buy</th><th>Exit</th><th>Profit / loss</th></tr></thead>
+    <tbody>
+    {% for p in live_done %}
+      <tr>
+        <td>{{ p.symbol }}</td>
+        <td>{{ p.side }}</td>
+        <td class="num">{{ p.qty }}</td>
+        <td class="num">{{ p.avg_buy | inr }}</td>
+        <td class="num">{{ p.current | inr if p.current else '—' }}</td>
+        <td class="num {{ p.pnl_class }}">{{ p.pnl | inr if p.pnl is not none else '—' }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6">No settled live trades.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</article>
 <article class="panel">
   <h2>Fills</h2>
   <table>
