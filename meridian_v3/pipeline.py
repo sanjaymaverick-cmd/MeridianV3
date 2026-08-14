@@ -226,6 +226,9 @@ def run_cycle(session: Session, *, live_armed: bool | None = None) -> dict:
             )
         )
         if decision.paper:
+            if held and held.qty > 0 and decision.action == held.side:
+                holds += 1
+                continue
             rank = decision.confidence * (decision.confluence / 100.0) + decision.p_success * 0.15
             ranked.append((rank, item, decision))
         else:
@@ -271,4 +274,6 @@ def run_cycle(session: Session, *, live_armed: bool | None = None) -> dict:
         "skipped_no_tape": skipped_no_tape,
         "live_armed": armed,
         "paper_clips": paper_clips,
+        "open_count": int(open_paper),
+        "cash": float(broker.funds()),
     }

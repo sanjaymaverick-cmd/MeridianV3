@@ -3,6 +3,15 @@ from meridian_v3.config import Settings
 from meridian_v3.engine.drawdown import assess_drawdown
 
 
+def test_reserve_does_not_trap_leftover_cash():
+    plan = size_position(
+        equity=50_000, cash=6_000, price=200, atr=8, p_success=0.62, payoff=1.4,
+        confidence=0.8, drawdown=assess_drawdown(50_000, 50_000), settings=Settings(),
+    )
+    assert not plan.blocked
+    assert plan.qty >= 1
+
+
 def test_fifty_thousand_book_can_buy_several_shares():
     plan = size_position(
         equity=50_000, cash=50_000, price=1400, atr=20, p_success=0.62, payoff=1.4,

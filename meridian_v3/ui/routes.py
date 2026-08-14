@@ -196,9 +196,16 @@ def desk_cycle(request: Request):
     with desk_lock:
         result = run_cycle(request.state.session)
         request.state.session.commit()
+    extra = ""
+    if result["paper_opened"] == 0:
+        extra = (
+            f" No new clip: {result.get('open_count', 0)} already open, "
+            f"cash ₹{result.get('cash', 0):,.0f}. "
+            "Already-held names are not bought again."
+        )
     notice = (
         f"Cycle finished. Paper fills: {result['paper_opened']}. "
-        f"Hold: {result.get('holds', 0)}. Live stays disarmed."
+        f"Hold: {result.get('holds', 0)}. Live stays disarmed.{extra}"
     )
     return RedirectResponse("/?notice=" + _q(notice), status_code=303)
 
@@ -207,6 +214,9 @@ def desk_cycle(request: Request):
 def desk_seed(request: Request):
     with desk_lock:
         added = seed_demo(request.state.session)
+        from meridian_v3.data_providers.service import PriceProvider
+
+        PriceProvider(request.state.session).refresh_alt_markets()
         set_paper_auto(request.state.session, True)
         result = tick(request.state.session, refresh_prices=False)
         request.state.session.commit()

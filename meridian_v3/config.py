@@ -106,8 +106,8 @@ class SizingCfg(BaseModel):
     high_confidence: float = 0.78
     live_confidence: float = 0.82
     positional_confidence: float = 0.88
-    max_concurrent_normal: int = 8
-    max_concurrent_high: int = 12
+    max_concurrent_normal: int = 16
+    max_concurrent_high: int = 20
     max_position_pct: float = 0.18
     cash_reserve_pct: float = 0.10
 

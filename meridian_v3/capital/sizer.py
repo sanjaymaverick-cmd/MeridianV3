@@ -68,7 +68,7 @@ def size_position(
     )
     cap = risk_cap_pct(confidence, settings)
     risk_pct = min(kelly.sized, cap) * drawdown.scale
-    reserve = equity * settings.sizing.cash_reserve_pct
+    reserve = min(equity * settings.sizing.cash_reserve_pct, cash * 0.35)
     spendable = max(0.0, cash - reserve)
     risk_rupees = max(settings.sizing.min_risk_inr, equity * risk_pct)
     max_notional = min(spendable, equity * settings.sizing.max_position_pct)

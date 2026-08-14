@@ -175,6 +175,19 @@ class PriceProvider:
         self.session.flush()
         return {"marked": marked, "failed": len(failed), "failed_symbols": failed, "applied": marked}
 
+    def refresh_alt_markets(self) -> dict:
+        """Binance + India F&O clones. Fast. No full Yahoo scan."""
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        names = list(self.session.scalars(select(WatchItem).where(WatchItem.status == "active")))
+        crypto = [item for item in names if is_binance_symbol(item.symbol)]
+        got: set[str] = set()
+        marked = _refresh_binance(self.session, crypto, now, got)
+        marked += _clone_derived(self.session, names, now, got)
+        self.session.flush()
+        return {"marked": marked, "got": tuple(got)}
+
 
 def _usdinr(session: Session) -> float:
     row = session.scalar(select(PriceCache).where(PriceCache.symbol == "USDINR"))
