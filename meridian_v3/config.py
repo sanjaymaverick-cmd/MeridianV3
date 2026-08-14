@@ -34,6 +34,7 @@ class AccountCfg(BaseModel):
     currency: str = "INR"
     compound_profits: bool = True
     name: str = "Meridian Dedicated"
+    broker: str = "zerodha"
 
 
 class MarketSpec(BaseModel):

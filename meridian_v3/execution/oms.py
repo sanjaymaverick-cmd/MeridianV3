@@ -9,11 +9,14 @@ Fills write journal rows. Nothing vendor-specific lives here.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
+from meridian_v3.charges.indian import levy
+from meridian_v3.config import get_settings
 from meridian_v3.decision.engine import AutoDecision
 from meridian_v3.domain.copy import live_note
 from meridian_v3.execution.brokers.base import OrderRequest
@@ -66,6 +69,15 @@ class OrderManager:
         self.session.add(order)
         self.session.flush()
         if result.ok:
+            bill = _bill(
+                market=decision.market,
+                side=decision.action,
+                qty=result.filled_qty,
+                price=result.avg_price,
+                product=req.product,
+                session=self.session,
+            )
+            _take_fees(broker, venue, bill.total)
             fill = Fill(
                 order_id=order.id,
                 venue=venue,
@@ -73,7 +85,8 @@ class OrderManager:
                 side=decision.action,
                 qty=result.filled_qty,
                 price=result.avg_price,
-                fees=0.0,
+                fees=bill.total,
+                charges_json=json.dumps(bill.as_dict()),
                 filled_at=now,
                 note=live_note(
                     symbol=decision.symbol,
@@ -81,7 +94,8 @@ class OrderManager:
                     qty=result.filled_qty,
                     price=result.avg_price,
                     venue=venue,
-                ),
+                )
+                + f" Fees ₹{bill.total:,.2f} (brokerage ₹{bill.brokerage:,.2f} + GST ₹{bill.gst:,.2f}).",
             )
             self.session.add(fill)
             self._upsert_position(decision, result.filled_qty, result.avg_price, venue)
@@ -93,6 +107,9 @@ class OrderManager:
             "message": result.message,
             "broker_id": result.broker_id,
             "venue": venue,
+            "fees": bill.total if result.ok else 0.0,
+            "brokerage": bill.brokerage if result.ok else 0.0,
+            "gst": bill.gst if result.ok else 0.0,
         }
 
     def _upsert_position(self, decision: AutoDecision, qty: float, price: float, venue: str) -> None:
@@ -143,6 +160,7 @@ class OrderManager:
             return {"ok": False, "message": "already closed"}
         exit_side = "sell" if pos.side == "buy" else "buy"
         cid = f"{pos.venue}-x{uuid4().hex[:10]}"
+        product = "MIS" if pos.horizon == "intraday" else "CNC"
         req = OrderRequest(
             client_id=cid,
             symbol=pos.symbol,
@@ -151,6 +169,7 @@ class OrderManager:
             price=price,
             market=pos.market,
             venue=pos.venue,
+            product=product,
         )
         broker = self.paper if pos.venue == "paper" else self.live
         result = broker.place(req)
@@ -175,6 +194,16 @@ class OrderManager:
         pnl = (price - pos.avg_price) * pos.qty
         if pos.side == "sell":
             pnl = -pnl
+        bill = _bill(
+            market=pos.market,
+            side=exit_side,
+            qty=result.filled_qty,
+            price=result.avg_price,
+            product=product,
+            session=self.session,
+        )
+        _take_fees(broker, pos.venue, bill.total)
+        pnl -= bill.total + _entry_fees(self.session, pos)
         fill = Fill(
             order_id=order.id,
             venue=pos.venue,
@@ -182,9 +211,14 @@ class OrderManager:
             side=exit_side,
             qty=result.filled_qty,
             price=result.avg_price,
-            fees=0.0,
+            fees=bill.total,
+            charges_json=json.dumps(bill.as_dict()),
             filled_at=now,
-            note=f"{'PAPER' if pos.venue == 'paper' else 'LIVE'} EXIT: {reason}  P&L ₹{pnl:,.0f}",
+            note=(
+                f"{'PAPER' if pos.venue == 'paper' else 'LIVE'} EXIT: {reason}  "
+                f"P&L ₹{pnl:,.0f} after fees ₹{bill.total:,.2f} "
+                f"(brokerage ₹{bill.brokerage:,.2f} + GST ₹{bill.gst:,.2f})."
+            ),
         )
         self.session.add(fill)
         pos.status = "closed"
@@ -208,3 +242,36 @@ class OrderManager:
             else:
                 acct.cash = self.live.funds()
             acct.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _entry_fees(session: Session, pos: Position) -> float:
+    fills = session.query(Fill).filter(Fill.symbol == pos.symbol, Fill.venue == pos.venue)
+    if pos.opened_at is not None:
+        fills = fills.filter(Fill.filled_at >= pos.opened_at)
+    return sum(float(f.fees or 0) for f in fills)
+
+
+def _bill(*, market: str, side: str, qty: float, price: float, product: str, session: Session | None = None):
+    settings = get_settings()
+    size = settings.markets.india_futures.contract_size if market == "india_futures" else 1.0
+    broker_name = settings.account.broker
+    if session is not None:
+        acct = session.query(AccountState).filter(AccountState.venue == "paper").one_or_none()
+        if acct is not None and getattr(acct, "broker", None):
+            broker_name = acct.broker
+    return levy(
+        broker=broker_name,
+        market=market,
+        side=side,
+        qty=qty,
+        price=price,
+        product=product,
+        contract_size=size,
+    )
+
+
+def _take_fees(broker, venue: str, amount: float) -> None:
+    if amount <= 0:
+        return
+    if venue == "paper" and hasattr(broker, "charge"):
+        broker.charge(amount)

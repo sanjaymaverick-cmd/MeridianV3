@@ -47,3 +47,18 @@ def test_seed_post_shows_notice(session):
     res = client.post("/desk/seed", follow_redirects=True)
     assert res.status_code == 200
     assert b"Paper auto" in res.content or b"Paper fills" in res.content
+
+
+def test_broker_picker_and_book_shows_charges(session):
+    seed_demo(session, reset=True)
+    session.commit()
+    from meridian_v3.app import create_app
+
+    client = TestClient(create_app())
+    switched = client.post("/desk/broker", data={"broker": "icici_direct"}, follow_redirects=True)
+    assert switched.status_code == 200
+    assert b"ICICI Direct" in switched.content
+    book = client.get("/book")
+    assert book.status_code == 200
+    assert b"Charges paid" in book.content
+    assert b"Brokerage" in book.content

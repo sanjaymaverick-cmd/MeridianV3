@@ -14,7 +14,8 @@ from meridian_v3.domain.money import format_inr, format_pct
 from meridian_v3.engine.drawdown import assess_drawdown
 from meridian_v3.ingestion.service import ImportService
 from meridian_v3.autopilot import is_running, last_error, set_paper_auto, tick
-from meridian_v3.ui.book_view import decorate_positions
+from meridian_v3.charges.indian import BROKER_LABELS, BROKERS, broker_label, normalize_broker
+from meridian_v3.ui.book_view import decorate_fills, decorate_positions, ensure_fill_charges, summarize_charges
 from meridian_v3.pipeline import run_cycle
 from meridian_v3.storage.db import desk_lock
 from meridian_v3.storage.db import get_session
@@ -114,9 +115,19 @@ def signals_page(request: Request):
     return _render(request, "signals.html", "signals", rows=rows, events=events)
 
 
+def _account_broker(session) -> str:
+    paper = session.scalar(select(AccountState).where(AccountState.venue == "paper"))
+    if paper and getattr(paper, "broker", None):
+        return normalize_broker(paper.broker)
+    return normalize_broker(get_settings().account.broker)
+
+
 @router.get("/book", response_class=HTMLResponse)
 def book(request: Request):
     session = request.state.session
+    broker = _account_broker(session)
+    ensure_fill_charges(session, broker)
+    session.flush()
     paper = decorate_positions(
         session, list(session.scalars(select(Position).where(Position.venue == "paper").order_by(Position.id.desc())))
     )
@@ -127,7 +138,7 @@ def book(request: Request):
     paper_done = [p for p in paper if p["status"] == "closed"]
     live_open = [p for p in live if p["status"] == "open"]
     live_done = [p for p in live if p["status"] == "closed"]
-    fills = list(session.scalars(select(Fill).order_by(Fill.filled_at.desc()).limit(40)))
+    all_fills = list(session.scalars(select(Fill).order_by(Fill.filled_at.desc())))
     return _render(
         request,
         "book.html",
@@ -136,7 +147,10 @@ def book(request: Request):
         paper_done=paper_done,
         live_pos=live_open,
         live_done=live_done,
-        fills=fills,
+        fills=decorate_fills(all_fills[:40]),
+        charges=summarize_charges(all_fills),
+        broker=broker,
+        broker_label=broker_label(broker),
     )
 
 
@@ -203,7 +217,17 @@ def safety_page(request: Request):
     paper = session.scalar(select(AccountState).where(AccountState.venue == "paper"))
     live_dd = assess_drawdown(live.equity, live.peak) if live else None
     paper_dd = assess_drawdown(paper.equity, paper.peak) if paper else None
-    return _render(request, "safety.html", "safety", live_dd=live_dd, paper_dd=paper_dd)
+    broker = _account_broker(session)
+    return _render(
+        request,
+        "safety.html",
+        "safety",
+        live_dd=live_dd,
+        paper_dd=paper_dd,
+        broker=broker,
+        broker_label=broker_label(broker),
+        brokers=[{"id": name, "label": BROKER_LABELS[name]} for name in BROKERS],
+    )
 
 
 @router.get("/help", response_class=HTMLResponse)
@@ -275,3 +299,21 @@ def desk_arm(request: Request, on: str = Form("0")):
         live.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         session.commit()
     return RedirectResponse("/safety", status_code=303)
+
+
+@router.post("/desk/broker")
+def desk_broker(request: Request, broker: str = Form("zerodha")):
+    session = request.state.session
+    name = normalize_broker(broker)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    for venue in ("paper", "live"):
+        acct = session.scalar(select(AccountState).where(AccountState.venue == venue))
+        if acct:
+            acct.broker = name
+            acct.updated_at = now
+    session.commit()
+    notice = (
+        f"Fee sheet is now {broker_label(name)}. "
+        "New fills use that broker's brokerage plus GST, STT, stamp and exchange."
+    )
+    return RedirectResponse("/safety?notice=" + _q(notice), status_code=303)

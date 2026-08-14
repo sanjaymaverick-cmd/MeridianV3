@@ -11,7 +11,7 @@
 <div class="grid-2">
   <article class="panel">
     <h2>Live switch</h2>
-    <p class="note">Default is off. Arm only when you have plugged a broker adapter and you accept live risk on the ₹5,000 book.</p>
+    <p class="note">Default is off. Arm only when you have plugged a broker adapter and you accept live risk on the ₹50,000 book.</p>
     <form method="post" action="/desk/arm" class="inline">
       <input type="hidden" name="on" value="1">
       <button class="btn primary" type="submit">Arm live</button>
@@ -35,6 +35,27 @@
     {% endif %}
   </article>
 </div>
+<article class="panel">
+  <h2>Indian broker fee sheet</h2>
+  <p class="note">Every fill — paper and live — is billed like a contract note. Pick the broker this book pretends to use. GST is 18% on brokerage + exchange + SEBI. STT, stamp and exchange are statutory and do not change with the broker.</p>
+  <form method="post" action="/desk/broker" class="inline">
+    <label>
+      <span class="meta">Broker</span>
+      <select name="broker">
+        {% for b in brokers %}
+        <option value="{{ b.id }}" {{ 'selected' if b.id == broker else '' }}>{{ b.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button class="btn primary" type="submit">Use this sheet</button>
+  </form>
+  <p class="meta">Active: {{ broker_label }}</p>
+  <ul class="plain">
+    <li>Zerodha / Angel One — ₹0 delivery brokerage; otherwise ₹20 or 0.03%, whichever is lower.</li>
+    <li>ICICI Direct — 0.55% delivery; otherwise ₹25 or 0.05%, whichever is lower.</li>
+    <li>Crypto — 0.10% brokerage + GST + 1% TDS estimate (not an Indian exchange contract note).</li>
+  </ul>
+</article>
 <article class="panel">
   <h2>Hard rules on this book</h2>
   <ul class="plain">

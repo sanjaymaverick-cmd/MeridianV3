@@ -17,6 +17,7 @@ account:
   currency: INR
   compound_profits: true
   name: Meridian Dedicated
+  broker: zerodha
 
 markets:
   default: equity_cash

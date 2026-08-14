@@ -5,14 +5,28 @@
   <div>
     <p class="kicker">Hybrid book</p>
     <h1>Paper learns. Live is rare.</h1>
-    <p class="lede">Avg buy is what you paid. Current is the last mark. Settled rows show the exit and the profit or loss next to it.</p>
+    <p class="lede">Avg buy is what you paid. Current is the last mark. Profit and loss is after brokerage, GST, STT and the other Indian contract-note lines. Change the fee sheet on Safety.</p>
   </div>
 </section>
+<article class="panel">
+  <h2>Charges paid · {{ broker_label }}</h2>
+  <p class="figure">{{ charges.fees | inr }}</p>
+  <p class="meta">
+    Brokerage {{ charges.brokerage | inr }}
+    · GST {{ charges.gst | inr }}
+    · STT {{ charges.stt | inr }}
+    · Stamp {{ charges.stamp | inr }}
+    · Exchange {{ charges.exchange | inr }}
+    {% if charges.tds %} · TDS {{ charges.tds | inr }}{% endif %}
+    · {{ charges.count }} fill{{ 's' if charges.count != 1 else '' }}
+  </p>
+  <p class="note">Statutory lines (STT, stamp, SEBI, exchange, GST) are the same for every broker. Only the brokerage line changes. Paper cash is reduced by the full bill on each new fill. Older fills show an estimate.</p>
+</article>
 <div class="grid-2">
   <article class="panel">
     <h2>Paper — open</h2>
     <table>
-      <thead><tr><th>Name</th><th>Side</th><th>Qty</th><th>Avg buy</th><th>Current</th><th>Open P&amp;L</th></tr></thead>
+      <thead><tr><th>Name</th><th>Side</th><th>Qty</th><th>Avg buy</th><th>Current</th><th>Fees</th><th>Open P&amp;L</th></tr></thead>
       <tbody>
       {% for p in paper_pos %}
         <tr>
@@ -21,10 +35,11 @@
           <td class="num">{{ p.qty }}</td>
           <td class="num">{{ p.avg_buy | inr }}</td>
           <td class="num">{{ p.current | inr if p.current else '—' }}</td>
+          <td class="num">{{ p.fees | inr }}</td>
           <td class="num {{ p.pnl_class }}">{{ p.pnl | inr if p.pnl is not none else '—' }}</td>
         </tr>
       {% else %}
-        <tr><td colspan="6">No open paper clips.</td></tr>
+        <tr><td colspan="7">No open paper clips.</td></tr>
       {% endfor %}
       </tbody>
     </table>
@@ -32,7 +47,7 @@
   <article class="panel">
     <h2>Live — open</h2>
     <table>
-      <thead><tr><th>Name</th><th>Side</th><th>Qty</th><th>Avg buy</th><th>Current</th><th>Open P&amp;L</th></tr></thead>
+      <thead><tr><th>Name</th><th>Side</th><th>Qty</th><th>Avg buy</th><th>Current</th><th>Fees</th><th>Open P&amp;L</th></tr></thead>
       <tbody>
       {% for p in live_pos %}
         <tr>
@@ -41,10 +56,11 @@
           <td class="num">{{ p.qty }}</td>
           <td class="num">{{ p.avg_buy | inr }}</td>
           <td class="num">{{ p.current | inr if p.current else '—' }}</td>
+          <td class="num">{{ p.fees | inr }}</td>
           <td class="num {{ p.pnl_class }}">{{ p.pnl | inr if p.pnl is not none else '—' }}</td>
         </tr>
       {% else %}
-        <tr><td colspan="6">Empty. Live stays off until you arm it.</td></tr>
+        <tr><td colspan="7">Empty. Live stays off until you arm it.</td></tr>
       {% endfor %}
       </tbody>
     </table>
@@ -53,7 +69,7 @@
 <article class="panel">
   <h2>Settled paper trades</h2>
   <table>
-    <thead><tr><th>Name</th><th>Side</th><th>Qty</th><th>Avg buy</th><th>Exit</th><th>Profit / loss</th></tr></thead>
+    <thead><tr><th>Name</th><th>Side</th><th>Qty</th><th>Avg buy</th><th>Exit</th><th>Fees</th><th>Profit / loss</th></tr></thead>
     <tbody>
     {% for p in paper_done %}
       <tr>
@@ -62,10 +78,11 @@
         <td class="num">{{ p.qty }}</td>
         <td class="num">{{ p.avg_buy | inr }}</td>
         <td class="num">{{ p.current | inr if p.current else '—' }}</td>
+        <td class="num">{{ p.fees | inr }}</td>
         <td class="num {{ p.pnl_class }}">{{ p.pnl | inr if p.pnl is not none else '—' }}</td>
       </tr>
     {% else %}
-      <tr><td colspan="6">No settled paper trades yet.</td></tr>
+      <tr><td colspan="7">No settled paper trades yet.</td></tr>
     {% endfor %}
     </tbody>
   </table>
@@ -73,7 +90,7 @@
 <article class="panel">
   <h2>Settled live trades</h2>
   <table>
-    <thead><tr><th>Name</th><th>Side</th><th>Qty</th><th>Avg buy</th><th>Exit</th><th>Profit / loss</th></tr></thead>
+    <thead><tr><th>Name</th><th>Side</th><th>Qty</th><th>Avg buy</th><th>Exit</th><th>Fees</th><th>Profit / loss</th></tr></thead>
     <tbody>
     {% for p in live_done %}
       <tr>
@@ -82,10 +99,11 @@
         <td class="num">{{ p.qty }}</td>
         <td class="num">{{ p.avg_buy | inr }}</td>
         <td class="num">{{ p.current | inr if p.current else '—' }}</td>
+        <td class="num">{{ p.fees | inr }}</td>
         <td class="num {{ p.pnl_class }}">{{ p.pnl | inr if p.pnl is not none else '—' }}</td>
       </tr>
     {% else %}
-      <tr><td colspan="6">No settled live trades.</td></tr>
+      <tr><td colspan="7">No settled live trades.</td></tr>
     {% endfor %}
     </tbody>
   </table>
@@ -93,7 +111,12 @@
 <article class="panel">
   <h2>Fills</h2>
   <table>
-    <thead><tr><th>When</th><th>Venue</th><th>Name</th><th>Side</th><th>Qty</th><th>Price</th><th>Note</th></tr></thead>
+    <thead>
+      <tr>
+        <th>When</th><th>Venue</th><th>Name</th><th>Side</th><th>Qty</th><th>Price</th>
+        <th>Brokerage</th><th>GST</th><th>STT</th><th>Stamp</th><th>Fees</th><th>Note</th>
+      </tr>
+    </thead>
     <tbody>
     {% for f in fills %}
       <tr>
@@ -103,10 +126,15 @@
         <td>{{ f.side }}</td>
         <td class="num">{{ f.qty }}</td>
         <td class="num">{{ f.price | inr }}</td>
+        <td class="num">{{ f.brokerage | inr }}</td>
+        <td class="num">{{ f.gst | inr }}</td>
+        <td class="num">{{ f.stt | inr }}</td>
+        <td class="num">{{ f.stamp | inr }}</td>
+        <td class="num">{{ f.fees | inr }}</td>
         <td class="wrap">{{ f.note }}</td>
       </tr>
     {% else %}
-      <tr><td colspan="7">No fills yet.</td></tr>
+      <tr><td colspan="12">No fills yet.</td></tr>
     {% endfor %}
     </tbody>
   </table>

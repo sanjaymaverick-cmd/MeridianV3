@@ -51,6 +51,7 @@ def _migrate(engine) -> None:
         "paper_auto": "INTEGER DEFAULT 1",
         "last_cycle_at": "DATETIME",
         "last_cycle_note": "TEXT DEFAULT ''",
+        "broker": "VARCHAR(24) DEFAULT 'zerodha'",
     }
     with engine.begin() as conn:
         rows = conn.execute(text("PRAGMA table_info(account_state)")).fetchall()
@@ -78,6 +79,9 @@ def _migrate(engine) -> None:
         }.items():
             if name not in pos_cols:
                 conn.execute(text(f"ALTER TABLE positions ADD COLUMN {name} {ddl}"))
+        fill_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(fills)")).fetchall()}
+        if "charges_json" not in fill_cols:
+            conn.execute(text("ALTER TABLE fills ADD COLUMN charges_json TEXT DEFAULT '{}'"))
 
 
 def get_session() -> Session:

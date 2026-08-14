@@ -53,5 +53,8 @@ class PaperBroker(BrokerAdapter):
     def positions(self) -> list[PositionSnap]:
         return list(self._positions.values())
 
+    def charge(self, amount: float) -> None:
+        self.cash -= max(0.0, amount)
+
     def funds(self) -> float:
         return self.cash

@@ -23,6 +23,7 @@ class AccountState(Base):
     paper_auto: Mapped[int] = mapped_column(Integer, default=1)
     last_cycle_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_cycle_note: Mapped[str] = mapped_column(Text, default="")
+    broker: Mapped[str] = mapped_column(String(24), default="zerodha")
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
@@ -190,6 +191,7 @@ class Fill(Base):
     qty: Mapped[float] = mapped_column(Float, nullable=False)
     price: Mapped[float] = mapped_column(Float, nullable=False)
     fees: Mapped[float] = mapped_column(Float, default=0.0)
+    charges_json: Mapped[str] = mapped_column(Text, default="{}")
     filled_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     note: Mapped[str] = mapped_column(Text, default="")
 

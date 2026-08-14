@@ -149,12 +149,16 @@ def ensure_demo(session: Session) -> int:
                     peak=start,
                     live_armed=0,
                     paper_auto=1,
+                    broker=settings.account.broker or "zerodha",
                     updated_at=now,
                 )
             )
             session.add(EquityPoint(venue=venue, as_of=now, equity=start, cash=start, peak=start))
             written += 1
             continue
+        if not getattr(acct, "broker", None):
+            acct.broker = settings.account.broker or "zerodha"
+            written += 1
         if lift_book_to_start(acct, start, now):
             written += 1
 
