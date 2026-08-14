@@ -10,7 +10,6 @@ from meridian_v3.storage.schema import (
     AccountState,
     EquityPoint,
     OptionLegRow,
-    Position,
     PriceBar,
     PriceCache,
     RegimeState,
@@ -138,9 +137,6 @@ def ensure_demo(session: Session) -> int:
         written += 1
 
     start = settings.account.starting_equity_inr
-    open_paper = session.scalar(
-        select(Position.id).where(Position.venue == "paper", Position.status == "open").limit(1)
-    )
     for venue in ("paper", "live"):
         acct = session.scalar(select(AccountState).where(AccountState.venue == venue))
         if acct is None:
@@ -159,19 +155,7 @@ def ensure_demo(session: Session) -> int:
             session.add(EquityPoint(venue=venue, as_of=now, equity=start, cash=start, peak=start))
             written += 1
             continue
-        unused = abs(acct.equity - acct.cash) < 1.0
-        stale_small = acct.equity <= 5000.01 and unused
-        if venue == "paper" and open_paper is None and unused and acct.equity + 1 < start:
-            acct.cash = start
-            acct.equity = start
-            acct.peak = max(acct.peak, start)
-            acct.updated_at = now
-            written += 1
-        elif venue == "live" and unused and (stale_small or acct.equity + 1 < start) and not acct.live_armed:
-            acct.cash = start
-            acct.equity = start
-            acct.peak = max(acct.peak, start)
-            acct.updated_at = now
+        if lift_book_to_start(acct, start, now):
             written += 1
 
     leg = session.scalar(select(OptionLegRow).where(OptionLegRow.leg_id == "demo-nifty-ce"))
@@ -209,3 +193,24 @@ def ensure_demo(session: Session) -> int:
         written += 1
     session.flush()
     return written
+
+
+def lift_book_to_start(acct: AccountState, start: float, now) -> bool:
+    """Credit an old ₹5,000 demo book up to ₹50,000 without wiping open paper clips."""
+    if acct.peak + 1 >= start and acct.equity + 1 >= start:
+        return False
+    if acct.peak <= 5000.01:
+        credit = start - acct.peak
+        acct.cash += credit
+        acct.equity += credit
+        acct.peak = start
+        acct.updated_at = now
+        return True
+    unused = abs(acct.equity - acct.cash) < 1.0
+    if unused and acct.equity + 1 < start and not acct.live_armed:
+        acct.cash = start
+        acct.equity = start
+        acct.peak = start
+        acct.updated_at = now
+        return True
+    return False

@@ -36,3 +36,36 @@ def test_seed_lifts_old_five_thousand_book(session):
     paper = session.query(AccountState).filter_by(venue="paper").one()
     assert paper.cash == 50_000
     assert paper.equity == 50_000
+
+
+def test_seed_credits_paper_even_with_open_clips(session):
+    from datetime import datetime, timezone
+
+    from meridian_v3.storage.schema import Position
+
+    seed_demo(session, reset=True)
+    paper = session.query(AccountState).filter_by(venue="paper").one()
+    paper.cash = 500
+    paper.equity = 4990
+    paper.peak = 5000
+    session.add(
+        Position(
+            venue="paper",
+            market="equity_cash",
+            symbol="INFY",
+            side="buy",
+            qty=1,
+            avg_price=1400,
+            stop=1300,
+            horizon="intraday",
+            status="open",
+            source="test",
+            opened_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        )
+    )
+    session.flush()
+    seed_demo(session)
+    paper = session.query(AccountState).filter_by(venue="paper").one()
+    assert abs(paper.cash - 45_500) < 0.01
+    assert abs(paper.equity - 49_990) < 0.01
+    assert paper.peak == 50_000

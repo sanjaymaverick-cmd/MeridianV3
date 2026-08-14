@@ -58,6 +58,18 @@ def _migrate(engine) -> None:
         for name, ddl in wanted.items():
             if name not in have:
                 conn.execute(text(f"ALTER TABLE account_state ADD COLUMN {name} {ddl}"))
+        # Old paper books started at ₹5,000. Credit the gap so demo cash is ₹50,000.
+        conn.execute(
+            text(
+                """
+                UPDATE account_state
+                SET cash = cash + (50000 - peak),
+                    equity = equity + (50000 - peak),
+                    peak = 50000
+                WHERE peak <= 5000.01 AND peak > 0
+                """
+            )
+        )
 
 
 def get_session() -> Session:
