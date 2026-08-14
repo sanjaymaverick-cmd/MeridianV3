@@ -76,5 +76,6 @@ The browser only receives finished JSON: candles, diamonds, lines, zones, window
 | 9 | [docs/09-portfolio-import.md](docs/09-portfolio-import.md) | PDF / XLSX / OCR |
 | 10 | [docs/10-phases.md](docs/10-phases.md) | Phased build |
 | 11 | [docs/11-proprietary.md](docs/11-proprietary.md) | How the math stays private |
+| 12 | [docs/12-independent-review-prompt.md](docs/12-independent-review-prompt.md) | Prompt for an independent full-desk audit |
 
 This is personal software. It is not an offer of investment advice to the public. You can lose the whole ₹5,000.
