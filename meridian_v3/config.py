@@ -49,14 +49,42 @@ class MarketSpec(BaseModel):
     micro_lots: bool = False
     standard_lots_forbidden: bool = False
     min_lot: float = 1.0
+    margin_pct: float = 0.12
+    max_leverage: float = 2.0
+    contract_size: float = 1.0
+    premium_pct: float = 0.03
 
 
 class MarketsCfg(BaseModel):
     default: str = "equity_cash"
-    priority: list[str] = Field(default_factory=lambda: ["equity_cash", "options_buy", "forex_micro"])
+    priority: list[str] = Field(
+        default_factory=lambda: [
+            "equity_cash",
+            "options_buy",
+            "india_futures",
+            "crypto_spot",
+            "crypto_futures",
+            "crypto_options",
+            "forex_micro",
+        ]
+    )
     equity_cash: MarketSpec = Field(default_factory=lambda: MarketSpec(home=True))
     options_buy: MarketSpec = Field(
         default_factory=lambda: MarketSpec(buying_only=True, selling_forbidden=True)
+    )
+    india_futures: MarketSpec = Field(
+        default_factory=lambda: MarketSpec(min_lot=0.05, lot_step=0.05, margin_pct=0.10, contract_size=65)
+    )
+    crypto_spot: MarketSpec = Field(
+        default_factory=lambda: MarketSpec(lot_step=0.0001, min_lot=0.0001, min_notional=200)
+    )
+    crypto_futures: MarketSpec = Field(
+        default_factory=lambda: MarketSpec(lot_step=0.0001, min_lot=0.0001, max_leverage=2.0, margin_pct=0.50)
+    )
+    crypto_options: MarketSpec = Field(
+        default_factory=lambda: MarketSpec(
+            buying_only=True, selling_forbidden=True, lot_step=0.001, min_lot=0.001, premium_pct=0.03
+        )
     )
     forex_micro: MarketSpec = Field(
         default_factory=lambda: MarketSpec(

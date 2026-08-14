@@ -75,20 +75,22 @@ def evaluate_safety(
         )
 
     in_session, minutes = session_state(now, settings)
-    overnight_blocked = (
-        (market == "options_buy" and settings.safety.overnight_options_forbidden)
+    crypto = market.startswith("crypto")
+    overnight_blocked = (not crypto) and (
+        (market in {"options_buy", "crypto_options"} and settings.safety.overnight_options_forbidden)
         or (market == "forex_micro" and settings.safety.overnight_fx_forbidden)
         or (horizon == "intraday")
+        or market == "india_futures"
     )
     if (not in_session or minutes <= settings.safety.flatten_before_close_minutes) and overnight_blocked:
         if horizon != "positional":
             allow_live = False
             reasons.append(
-                "Too close to the close, or the market is shut. "
-                "Intraday and options/FX clips do not stay overnight."
+                "Too close to the close, or the Indian market is shut. "
+                "Intraday India clips do not stay overnight. Crypto can keep going."
             )
 
-    if market == "options_buy" and settings.markets.options_buy.selling_forbidden:
+    if market in {"options_buy", "crypto_options"}:
         reasons.append("Options: buying only. Selling premium is never allowed.")
 
     if not reasons:

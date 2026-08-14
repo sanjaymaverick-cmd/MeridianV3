@@ -14,6 +14,10 @@ class Side(str, Enum):
 class Market(str, Enum):
     EQUITY_CASH = "equity_cash"
     OPTIONS_BUY = "options_buy"
+    INDIA_FUTURES = "india_futures"
+    CRYPTO_SPOT = "crypto_spot"
+    CRYPTO_FUTURES = "crypto_futures"
+    CRYPTO_OPTIONS = "crypto_options"
     FOREX_MICRO = "forex_micro"
 
 

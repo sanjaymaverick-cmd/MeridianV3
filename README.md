@@ -51,7 +51,7 @@ Native window: `pip install -e ".[desktop]"` then `python -m meridian_v3 desktop
 
 ## Capital rules (binding)
 
-- Starting equity **₹50,000**. All profits compound. The algo scans NSE and BSE and picks names — you do not have to type them.
+- Starting equity **₹50,000**. All profits compound. The algo scans NSE/BSE cash, India mini-futures, buy-only options, and Binance crypto (spot, futures, buy-only options).
 - Equity cash is home. Capital may visit F&O (options **buying** only) or forex (nano/micro only) when that tape is clearly stronger.
 - Risk per trade is confidence-weighted. High confidence can take more. Normal signals take less.
 - Pause **new live** trades at 20% drawdown from peak. Open positions may stay. Paper never pauses.

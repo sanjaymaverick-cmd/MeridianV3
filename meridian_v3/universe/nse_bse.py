@@ -13,6 +13,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from meridian_v3.storage.schema import WatchItem
+from meridian_v3.universe.crypto import BINANCE_UNIVERSE
+from meridian_v3.universe.derivatives import INDIA_DERIV_UNIVERSE
 
 # (symbol, exchange, class, why)
 ALGO_UNIVERSE: tuple[tuple[str, str, str, str], ...] = (
@@ -122,6 +124,8 @@ ALGO_UNIVERSE: tuple[tuple[str, str, str, str], ...] = (
     ("AXISBANK", "BSE", "equity", "BSE"),
     # Cross-asset the router may visit
     ("NIFTY", "NSE", "index", "Index / options buy"),
+    ("BANKNIFTY", "NSE", "index", "Bank Nifty"),
+    ("SENSEX", "NSE", "index", "Sensex"),
     ("GOLD", "NSE", "commodity", "Gold proxy"),
     ("USDINR", "NSE", "fx", "Rupee"),
 )
@@ -143,6 +147,10 @@ def install_universe(session: Session) -> int:
     wanted: dict[str, tuple[str, str, str]] = {}
     for symbol, exchange, klass, why in ALGO_UNIVERSE:
         wanted.setdefault(symbol, (exchange, klass, why))
+    for symbol, klass, why in BINANCE_UNIVERSE:
+        wanted.setdefault(symbol, ("BINANCE", klass, why))
+    for symbol, klass, why in INDIA_DERIV_UNIVERSE:
+        wanted.setdefault(symbol, ("NSE", klass, why))
     with session.no_autoflush:
         have = {row.symbol: row for row in session.scalars(select(WatchItem))}
     written = 0

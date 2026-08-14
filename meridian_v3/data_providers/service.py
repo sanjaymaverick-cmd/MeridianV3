@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from meridian_v3.config import get_settings
 from meridian_v3.domain.symbols import normalize_symbol, yahoo_candidates
 from meridian_v3.engine.atr import average_true_range
+from meridian_v3.data_providers.binance import fetch_klines, is_binance_symbol
 from meridian_v3.storage.schema import PriceBar, PriceCache, WatchItem
 
 
@@ -19,7 +20,11 @@ def _tickers_for(symbol: str) -> list[str]:
     if symbol == "USDINR":
         return ["USDINR=X", "INR=X"]
     if symbol == "NIFTY":
-        return ["^NSEI", "^NSEBANK"]
+        return ["^NSEI"]
+    if symbol == "BANKNIFTY":
+        return ["^NSEBANK"]
+    if symbol == "SENSEX":
+        return ["^BSESN"]
     if symbol == "GOLD":
         return ["GOLDBEES.NS", "GC=F", "GOLD.NS"]
     parsed = normalize_symbol(symbol)
@@ -103,8 +108,14 @@ class PriceProvider:
 
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         logging.getLogger("yfinance").setLevel(logging.CRITICAL)
-        specials = {"USDINR", "NIFTY", "GOLD"}
-        batch = [item for item in names if item.symbol not in specials]
+        specials = {"USDINR", "NIFTY", "BANKNIFTY", "SENSEX", "GOLD"}
+        crypto = [item for item in names if is_binance_symbol(item.symbol)]
+        deriv = [item for item in names if "." in item.symbol and not is_binance_symbol(item.symbol)]
+        batch = [
+            item
+            for item in names
+            if item.symbol not in specials and item not in crypto and item not in deriv
+        ]
         leftovers = [item for item in names if item.symbol in specials]
         marked = 0
         got: set[str] = set()
@@ -150,6 +161,9 @@ class PriceProvider:
                 marked += 1
                 got.add(item.symbol)
 
+        marked += _refresh_binance(self.session, crypto, now, got)
+        marked += _clone_derived(self.session, names, now, got)
+
         failed = [n.symbol for n in names if n.symbol not in got]
         for symbol in failed:
             cache = self.session.scalar(select(PriceCache).where(PriceCache.symbol == symbol))
@@ -160,3 +174,94 @@ class PriceProvider:
             cache.as_of = now
         self.session.flush()
         return {"marked": marked, "failed": len(failed), "failed_symbols": failed, "applied": marked}
+
+
+def _usdinr(session: Session) -> float:
+    row = session.scalar(select(PriceCache).where(PriceCache.symbol == "USDINR"))
+    if row and row.last and row.last > 50:
+        return float(row.last)
+    return 83.5
+
+
+def _refresh_binance(session: Session, items, now: datetime, got: set[str]) -> int:
+    import pandas as pd
+
+    fx = _usdinr(session)
+    marked = 0
+    roots: dict[str, list] = {}
+    for item in items:
+        roots.setdefault(item.symbol.split(".", 1)[0], []).append(item)
+    for pair, group in roots.items():
+        futures = any(i.symbol.endswith(".F") or i.asset_class == "crypto_futures" for i in group)
+        rows = fetch_klines(pair, futures=futures) or fetch_klines(pair, futures=False)
+        if not rows:
+            continue
+        frame = pd.DataFrame(rows).set_index("time")
+        for col in ("Open", "High", "Low", "Close"):
+            frame[col] = frame[col] * fx
+        if _apply_frame(session, pair, frame, now):
+            got.add(pair)
+            marked += 1
+        spot = session.scalar(select(PriceCache).where(PriceCache.symbol == pair))
+        if spot is None or not spot.last:
+            continue
+        for item in group:
+            if item.symbol == pair:
+                continue
+            if item.symbol.endswith(".F") or item.asset_class == "crypto_futures":
+                if _copy_cache(session, pair, item.symbol, now, scale=1.0):
+                    got.add(item.symbol)
+                    marked += 1
+            elif item.symbol.endswith(".C") or item.asset_class == "crypto_options":
+                if _copy_cache(session, pair, item.symbol, now, scale=0.03):
+                    got.add(item.symbol)
+                    marked += 1
+    return marked
+
+
+_UNDERLYING = {
+    "NIFTY.F": "NIFTY",
+    "NIFTY.C": "NIFTY",
+    "BANKNIFTY.F": "BANKNIFTY",
+    "BANKNIFTY.C": "BANKNIFTY",
+    "SENSEX.F": "SENSEX",
+    "RELIANCE.F": "RELIANCE",
+    "RELIANCE.C": "RELIANCE",
+    "HDFCBANK.F": "HDFCBANK",
+    "INFY.F": "INFY",
+}
+
+
+def _clone_derived(session: Session, names, now: datetime, got: set[str]) -> int:
+    marked = 0
+    for item in names:
+        under = _UNDERLYING.get(item.symbol)
+        if not under:
+            continue
+        scale = 0.015 if item.symbol.endswith(".C") or item.asset_class == "option" else 1.0
+        if _copy_cache(session, under, item.symbol, now, scale=scale):
+            got.add(item.symbol)
+            marked += 1
+    return marked
+
+
+def _copy_cache(session: Session, src: str, dest: str, now: datetime, *, scale: float) -> bool:
+    source = session.scalar(select(PriceCache).where(PriceCache.symbol == src))
+    if source is None or not source.last:
+        return False
+    cache = session.scalar(select(PriceCache).where(PriceCache.symbol == dest))
+    if cache is None:
+        cache = PriceCache(symbol=dest)
+        session.add(cache)
+    cache.last = source.last * scale
+    cache.prev_close = (source.prev_close or source.last) * scale
+    cache.sma20 = (source.sma20 or source.last) * scale
+    cache.sma50 = (source.sma50 or source.last) * scale
+    cache.high20 = (source.high20 or source.last) * scale
+    cache.low20 = (source.low20 or source.last) * scale
+    cache.volume = source.volume
+    cache.prev_volume = source.prev_volume
+    cache.atr = (source.atr or source.last * 0.015) * scale
+    cache.as_of = now
+    cache.quality = source.quality or "live"
+    return True

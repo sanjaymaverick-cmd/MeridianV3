@@ -48,6 +48,9 @@ class DecisionInput:
     equity_score: float
     options_score: float
     forex_score: float
+    crypto_score: float = 0.0
+    futures_score: float = 0.0
+    preferred_market: str | None = None
     now: datetime | None = None
     belief: BetaBelief | None = None
     logit: OnlineLogit | None = None
@@ -110,8 +113,11 @@ def decide(inp: DecisionInput, settings: Settings | None = None) -> AutoDecision
         equity_score=inp.equity_score,
         options_score=inp.options_score,
         forex_score=inp.forex_score,
+        crypto_score=inp.crypto_score,
+        futures_score=inp.futures_score,
         options_allowed=inp.options_allowed,
         forex_allowed=inp.forex_allowed,
+        preferred=inp.preferred_market,
     )
 
     action = "hold"
@@ -120,7 +126,8 @@ def decide(inp: DecisionInput, settings: Settings | None = None) -> AutoDecision
     elif inp.primary.direction < 0 and conf.side <= 0 and meta.take and not fresh.stale:
         action = "sell"
 
-    if action == "sell" and route.market == "equity_cash" and inp.held_qty <= 1e-9:
+    short_ok = route.market in {"india_futures", "crypto_futures", "forex_micro"}
+    if action == "sell" and not short_ok and inp.held_qty <= 1e-9:
         action = "hold"
         reasons.append(
             "This cash book does not short. A sell is only used to close a paper long we already hold."

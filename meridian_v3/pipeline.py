@@ -18,6 +18,7 @@ from meridian_v3.engine.edge import estimate_equity_costs
 from meridian_v3.engine.meta_label import primary_direction, rsi
 from meridian_v3.execution.brokers.paper_broker import PaperBroker
 from meridian_v3.execution.oms import OrderManager
+from meridian_v3.router.markets import market_for
 from meridian_v3.signals.engines import evaluate_signals
 from meridian_v3.storage.schema import (
     AccountState,
@@ -185,8 +186,11 @@ def run_cycle(session: Session, *, live_armed: bool | None = None) -> dict:
                 live_today=int(live_today),
                 open_count=int(open_paper),
                 equity_score=70 if item.asset_class == "equity" else 40,
-                options_score=55 if item.symbol == "NIFTY" else 20,
+                options_score=70 if item.asset_class in {"option", "index"} or item.symbol.endswith(".C") else 20,
                 forex_score=50 if item.asset_class == "fx" else 15,
+                crypto_score=75 if "crypto" in item.asset_class or item.symbol.endswith("USDT") or ".USDT" in item.symbol else 15,
+                futures_score=72 if item.asset_class in {"future", "crypto_futures"} or item.symbol.endswith(".F") else 15,
+                preferred_market=market_for(item.asset_class, item.symbol),
                 now=now,
                 belief=_belief(session, "core"),
                 held_qty=held.qty if held else 0.0,
