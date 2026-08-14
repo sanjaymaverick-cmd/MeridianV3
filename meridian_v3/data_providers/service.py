@@ -12,7 +12,7 @@ from meridian_v3.config import get_settings
 from meridian_v3.domain.symbols import normalize_symbol, yahoo_candidates
 from meridian_v3.engine.atr import average_true_range
 from meridian_v3.storage.schema import PriceBar, PriceCache, WatchItem
-from meridian_v3.universe import install_universe
+
 
 
 def _tickers_for(symbol: str) -> list[str]:
@@ -85,7 +85,6 @@ class PriceProvider:
         self.settings = get_settings()
 
     def refresh(self, *, force: bool = False) -> dict:
-        install_universe(self.session)
         names = list(self.session.scalars(select(WatchItem).where(WatchItem.status == "active")))
         if not names:
             return {"marked": 0, "failed": 0, "failed_symbols": [], "applied": 0, "note": "empty universe"}

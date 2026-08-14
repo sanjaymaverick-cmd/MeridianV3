@@ -25,7 +25,7 @@ from meridian_v3.execution.brokers.paper_broker import PaperBroker
 from meridian_v3.execution.oms import OrderManager
 from meridian_v3.pipeline import mark_to_market, persist_belief, run_cycle
 from meridian_v3.safety.guards import session_state
-from meridian_v3.storage.db import get_session
+from meridian_v3.storage.db import desk_lock, get_session
 from meridian_v3.storage.schema import AccountState, Position, PriceBar, PriceCache
 
 _lock = threading.Lock()
@@ -71,6 +71,7 @@ def tick(session: Session, *, refresh_prices: bool | None = None) -> dict:
     """One autonomous pass. Safe to call from tests or the worker."""
     global _ticks, _last_error
     settings = get_settings()
+    # Tests call tick() without the worker lock. The worker holds desk_lock.
     paper = session.scalar(select(AccountState).where(AccountState.venue == "paper"))
     if paper is None:
         return {"ok": False, "note": "desk is not seeded"}
@@ -179,15 +180,18 @@ def _exit_reason(pos: Position, last: float, cache, *, flatten: bool, session: S
 def _loop() -> None:
     global _last_error
     settings = get_settings()
+    # Let the first page load / Seed finish before the worker grabs SQLite.
+    _stop.wait(max(8, min(20, settings.alerts.poll_seconds)))
     while not _stop.is_set():
         session = get_session()
         try:
-            paper = session.scalar(select(AccountState).where(AccountState.venue == "paper"))
-            if paper is not None and paper.paper_auto:
-                tick(session)
-                session.commit()
-            else:
-                session.rollback()
+            with desk_lock:
+                paper = session.scalar(select(AccountState).where(AccountState.venue == "paper"))
+                if paper is not None and paper.paper_auto:
+                    tick(session)
+                    session.commit()
+                else:
+                    session.rollback()
         except Exception as exc:  # noqa: BLE001 — worker must stay up
             session.rollback()
             _last_error = str(exc)

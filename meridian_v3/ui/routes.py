@@ -15,6 +15,7 @@ from meridian_v3.engine.drawdown import assess_drawdown
 from meridian_v3.ingestion.service import ImportService
 from meridian_v3.autopilot import is_running, last_error, set_paper_auto, tick
 from meridian_v3.pipeline import run_cycle
+from meridian_v3.storage.db import desk_lock
 from meridian_v3.storage.db import get_session
 from meridian_v3.storage.schema import (
     AccountState,
@@ -192,8 +193,9 @@ def help_page(request: Request):
 
 @router.post("/desk/cycle")
 def desk_cycle(request: Request):
-    result = run_cycle(request.state.session)
-    request.state.session.commit()
+    with desk_lock:
+        result = run_cycle(request.state.session)
+        request.state.session.commit()
     notice = (
         f"Cycle finished. Paper fills: {result['paper_opened']}. "
         f"Hold: {result.get('holds', 0)}. Live stays disarmed."
@@ -203,10 +205,11 @@ def desk_cycle(request: Request):
 
 @router.post("/desk/seed")
 def desk_seed(request: Request):
-    added = seed_demo(request.state.session)
-    set_paper_auto(request.state.session, True)
-    result = tick(request.state.session)
-    request.state.session.commit()
+    with desk_lock:
+        added = seed_demo(request.state.session)
+        set_paper_auto(request.state.session, True)
+        result = tick(request.state.session, refresh_prices=False)
+        request.state.session.commit()
     head = (
         f"Demo desk refreshed. Added {added} missing piece(s)."
         if added
@@ -221,14 +224,15 @@ def desk_seed(request: Request):
 
 @router.post("/desk/auto")
 def desk_auto(request: Request, on: str = Form("1")):
-    want = on == "1"
-    set_paper_auto(request.state.session, want)
-    if want:
-        tick(request.state.session)
-        notice = "Paper auto is ON. The demo account will keep trading on its own."
-    else:
-        notice = "Paper auto is OFF. Nothing new will be paper-traded until you start it again."
-    request.state.session.commit()
+    with desk_lock:
+        want = on == "1"
+        set_paper_auto(request.state.session, want)
+        if want:
+            tick(request.state.session, refresh_prices=False)
+            notice = "Paper auto is ON. The demo account will keep trading on its own."
+        else:
+            notice = "Paper auto is OFF. Nothing new will be paper-traded until you start it again."
+        request.state.session.commit()
     return RedirectResponse("/?notice=" + _q(notice), status_code=303)
 
 

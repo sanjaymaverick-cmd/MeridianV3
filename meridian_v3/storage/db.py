@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from sqlalchemy import create_engine, text
+import threading
+
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from meridian_v3.config import get_settings
@@ -8,6 +10,7 @@ from meridian_v3.storage.schema import Base
 
 _engine = None
 _Session: sessionmaker | None = None
+desk_lock = threading.RLock()
 
 
 def get_engine():
@@ -18,8 +21,20 @@ def get_engine():
         _engine = create_engine(
             f"sqlite:///{settings.db_path}",
             future=True,
-            connect_args={"check_same_thread": False},
+            connect_args={
+                "check_same_thread": False,
+                "timeout": 30,
+            },
         )
+
+        @event.listens_for(_engine, "connect")
+        def _sqlite_pragmas(dbapi_conn, _connection_record) -> None:  # noqa: ANN001
+            cursor = dbapi_conn.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA busy_timeout=30000")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+            cursor.close()
+
         _Session = sessionmaker(bind=_engine, future=True, expire_on_commit=False)
     return _engine
 

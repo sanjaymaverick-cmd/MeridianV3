@@ -138,31 +138,32 @@ def universe_symbols() -> list[str]:
 
 
 def install_universe(session: Session) -> int:
-    """Put the scan list on the desk. The engine picks; the user does not have to."""
+    """Put missing scan names on the desk. Existing rows are left alone."""
     now = datetime.now(timezone.utc).replace(tzinfo=None)
-    written = 0
+    wanted: dict[str, tuple[str, str, str]] = {}
     for symbol, exchange, klass, why in ALGO_UNIVERSE:
-        # One row per symbol. NSE wins if both exist.
-        have = session.scalar(select(WatchItem).where(WatchItem.symbol == symbol))
-        note = f"{ALGO_NOTE} · {exchange} · {why}"
-        if have is None:
+        wanted.setdefault(symbol, (exchange, klass, why))
+    with session.no_autoflush:
+        have = {row.symbol: row for row in session.scalars(select(WatchItem))}
+    written = 0
+    for symbol, (exchange, klass, why) in wanted.items():
+        row = have.get(symbol)
+        if row is None:
             session.add(
                 WatchItem(
                     symbol=symbol,
                     asset_class=klass,
                     status="active",
-                    notes=note,
+                    notes=f"{ALGO_NOTE} · {exchange} · {why}",
                     created_at=now,
                     updated_at=now,
                 )
             )
             written += 1
-        else:
-            if have.status != "active":
-                have.status = "active"
-                written += 1
-            if ALGO_NOTE not in (have.notes or ""):
-                have.notes = note
-            have.updated_at = now
-    session.flush()
+            continue
+        if row.status != "active":
+            row.status = "active"
+            written += 1
+    if written:
+        session.flush()
     return written
