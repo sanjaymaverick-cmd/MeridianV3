@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Import{% endblock %}
+{% block stage %}
+<section class="hero">
+  <div>
+    <p class="kicker">Portfolio import</p>
+    <h1>PDF, Excel, or a photo of the statement</h1>
+    <p class="lede">Indian stocks, ETFs, and mutual funds. Check every line before you import. The risk engine then watches those names.</p>
+  </div>
+</section>
+<article class="panel">
+  <form class="stack" method="post" action="/import" enctype="multipart/form-data">
+    <label>Account name <input name="account_name" value="{{ account_name or 'Imported' }}"></label>
+    <label>Statement <input type="file" name="file" accept=".csv,.xlsx,.xls,.pdf,.png,.jpg,.jpeg,.webp" required></label>
+    <button class="btn" type="submit">Preview (do not import yet)</button>
+  </form>
+</article>
+{% if preview %}
+<article class="panel">
+  <h2>Please check this first</h2>
+  <p class="meta">{{ preview.filename }} · {{ preview.broker }} · {{ preview.source_kind }} · {{ preview.accepted }} ok / {{ preview.rejected }} skipped</p>
+  {% if preview.notes %}<p class="note">{{ preview.notes }}</p>{% endif %}
+  <table>
+    <thead><tr><th>Name</th><th>Qty</th><th>Avg</th><th>Kind</th><th>Note</th></tr></thead>
+    <tbody>
+    {% for row in preview.rows %}
+      <tr class="{{ 'bad' if row.error else '' }}">
+        <td>{{ row.symbol }} {% if row.company_name %}· {{ row.company_name }}{% endif %}</td>
+        <td class="num">{{ row.quantity }}</td>
+        <td class="num">{{ row.avg_cost }}</td>
+        <td>{{ row.instrument }}</td>
+        <td>{{ row.error or 'ok' }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <form method="post" action="/import" enctype="multipart/form-data" class="stack">
+    <input type="hidden" name="account_name" value="{{ account_name or 'Imported' }}">
+    <input type="hidden" name="commit" value="1">
+    <p class="note">To commit, choose the same file again and press Import. This second step is on purpose.</p>
+    <label>Same file <input type="file" name="file" required></label>
+    <button class="btn primary" type="submit">I have checked the rows — import</button>
+  </form>
+</article>
+{% endif %}
+<article class="panel">
+  <h2>Already imported</h2>
+  <table>
+    <thead><tr><th>Name</th><th>Qty</th><th>Avg</th><th>Kind</th><th>Account</th></tr></thead>
+    <tbody>
+    {% for h in holdings %}
+      <tr>
+        <td>{{ h.symbol }}</td>
+        <td class="num">{{ h.quantity }}</td>
+        <td class="num">{{ h.avg_cost | inr }}</td>
+        <td>{{ h.instrument }}</td>
+        <td>{{ h.account_name }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5">Nothing imported yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</article>
+{% endblock %}

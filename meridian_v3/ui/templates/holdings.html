@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Holdings{% endblock %}
+{% block stage %}
+<section class="hero">
+  <div>
+    <p class="kicker">Imported book</p>
+    <h1>Names the risk engine can see</h1>
+    <p class="lede">Imported holdings are mapped into watch + (if options) the Greeks book. Reviews of these names still say “(not an order)”.</p>
+  </div>
+</section>
+<article class="panel">
+  <table>
+    <thead><tr><th>Symbol</th><th>Company</th><th>ISIN</th><th>Qty</th><th>Avg</th><th>Last</th><th>Kind</th></tr></thead>
+    <tbody>
+    {% for h in rows %}
+      <tr>
+        <td><a href="/chart?symbol={{ h.symbol }}">{{ h.symbol }}</a></td>
+        <td>{{ h.company_name }}</td>
+        <td class="num">{{ h.isin or '—' }}</td>
+        <td class="num">{{ h.quantity }}</td>
+        <td class="num">{{ h.avg_cost | inr }}</td>
+        <td class="num">{{ h.last_price | inr if h.last_price else '—' }}</td>
+        <td>{{ h.instrument }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="7">Import a statement first.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</article>
+{% endblock %}

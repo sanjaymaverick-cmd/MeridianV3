@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MERIDIAN V3 · {% block title %}Command{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/meridian-v3.css">
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <script src="/static/vendor/lightweight-charts.js"></script>
+</head>
+<body class="{{ theme }}">
+  <header class="mast">
+    <a class="brand" href="/">
+      <svg class="mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M4 18C8 10 12 7 20 6" stroke="currentColor" stroke-width="1.2"/>
+        <circle cx="12" cy="12" r="1.5" fill="currentColor"/>
+        <path d="M16 4h4v4" stroke="currentColor" stroke-width="1.1"/>
+      </svg>
+      <span class="wordmark">MERIDIAN <em>V3</em></span>
+    </a>
+    <nav class="desk-nav" aria-label="Desk">
+      <a href="/" class="{{ 'active' if active == 'command' else '' }}">Command</a>
+      <a href="/signals" class="{{ 'active' if active == 'signals' else '' }}">Decisions</a>
+      <a href="/book" class="{{ 'active' if active == 'book' else '' }}">Paper / Live</a>
+      <a href="/review" class="{{ 'active' if active == 'review' else '' }}">Greeks</a>
+      <a href="/chart" class="{{ 'active' if active == 'chart' else '' }}">Chart</a>
+      <a href="/import" class="{{ 'active' if active == 'import' else '' }}">Import</a>
+      <a href="/holdings" class="{{ 'active' if active == 'holdings' else '' }}">Holdings</a>
+      <a href="/watch" class="{{ 'active' if active == 'watch' else '' }}">Watch</a>
+      <a href="/safety" class="{{ 'active' if active == 'safety' else '' }}">Safety</a>
+      <a href="/help" class="{{ 'active' if active == 'help' else '' }}">Help</a>
+    </nav>
+    <div class="mast-meta">
+      <span class="regime {{ regime.tone }}"><span class="dot"></span>{{ regime.label }}</span>
+      <span class="badge">ACK {{ pending_count }}</span>
+      <span class="badge {{ 'live' if live and live.live_armed else '' }}">{{ 'LIVE ARMED' if live and live.live_armed else 'PAPER' }}</span>
+      <span class="num">{{ now.strftime('%d %b %Y  %H:%M') }}</span>
+      <button class="btn" type="button" data-theme-toggle>Light</button>
+    </div>
+  </header>
+
+  <div class="shell">
+    <aside class="rail">
+      <section>
+        <h2>Dedicated book</h2>
+        <p class="rail-note">Starting capital <strong>₹5,000</strong>. Profits stay in the book. Equity cash is home.</p>
+        {% if paper %}
+        <p class="rail-meta">Paper {{ paper.equity | inr }}</p>
+        {% endif %}
+        {% if live %}
+        <p class="rail-meta">Live {{ live.equity | inr }}</p>
+        {% endif %}
+        <p class="rail-meta">Port {{ port }}</p>
+      </section>
+      <section>
+        <h2>Isolation</h2>
+        <p class="rail-note">This is <strong>MERIDIAN V3</strong>. It does not share the v1 or v2 book.</p>
+      </section>
+      <div class="rail-actions">
+        <form method="post" action="/desk/cycle">
+          <button class="btn primary" type="submit">Run one cycle</button>
+        </form>
+        <form method="post" action="/desk/seed">
+          <button class="btn" type="submit">Seed demo desk</button>
+        </form>
+      </div>
+    </aside>
+    <main class="stage">
+      {% block stage %}{% endblock %}
+    </main>
+  </div>
+
+  <footer class="colophon">
+    <span>Reviews say “(not an order)”. Live fills are a separate stream.</span>
+    <span>{{ subtitle }}</span>
+    <span>Separate app from MERIDIAN v1 and v2</span>
+  </footer>
+  <script src="/static/js/meridian-v3.js"></script>
+</body>
+</html>

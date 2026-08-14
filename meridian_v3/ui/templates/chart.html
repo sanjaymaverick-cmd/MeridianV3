@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Chart{% endblock %}
+{% block stage %}
+<section class="hero">
+  <div>
+    <p class="kicker">Lightweight Charts</p>
+    <h1>{{ symbol }}</h1>
+    <p class="lede">Green diamonds = look at a long. Red diamonds = look at a short. Gold lines and soft bands are already computed. The chart never sees the model.</p>
+  </div>
+</section>
+<article class="panel">
+  <form class="inline" method="get" action="/chart">
+    <label>Name <input name="symbol" value="{{ symbol }}"></label>
+    <button class="btn primary" type="submit">Open</button>
+  </form>
+  <div class="chart-box" data-symbol="{{ symbol }}" data-height="420"></div>
+  <p class="meta">Green diamond = look at a long / entry · Red diamond = look at a short / exit · Shaded days = a higher-attention window</p>
+</article>
+{% endblock %}

@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Command{% endblock %}
+{% block stage %}
+<section class="hero">
+  <div>
+    <p class="kicker">Dedicated account</p>
+    <h1>Paper and live, side by side</h1>
+    <p class="lede">Every signal is paper-traded. Only the highest-confidence clips can go live, and only when you arm the switch.</p>
+  </div>
+</section>
+
+<div class="grid-2">
+  <article class="panel">
+    <h2>Paper book</h2>
+    {% if paper %}
+    <p class="figure">{{ paper.equity | inr }}</p>
+    <p class="meta">Cash {{ paper.cash | inr }} · Peak {{ paper.peak | inr }}</p>
+    {% if paper_dd %}
+    <p class="note">{{ paper_dd.reason }}</p>
+    {% endif %}
+    {% endif %}
+  </article>
+  <article class="panel">
+    <h2>Live book</h2>
+    {% if live %}
+    <p class="figure">{{ live.equity | inr }}</p>
+    <p class="meta">Cash {{ live.cash | inr }} · Peak {{ live.peak | inr }} · {{ 'Armed' if live.live_armed else 'Disarmed' }}</p>
+    {% if live_dd %}
+    <p class="note">{{ live_dd.reason }}</p>
+    {% endif %}
+    {% endif %}
+  </article>
+</div>
+
+<article class="panel">
+  <h2>Open clips</h2>
+  <table>
+    <thead><tr><th>Venue</th><th>Name</th><th>Side</th><th>Qty</th><th>Avg</th><th>Market</th><th>Horizon</th></tr></thead>
+    <tbody>
+    {% for p in positions %}
+      <tr>
+        <td>{{ p.venue }}</td>
+        <td>{{ p.symbol }}</td>
+        <td>{{ p.side }}</td>
+        <td class="num">{{ p.qty }}</td>
+        <td class="num">{{ p.avg_price | inr }}</td>
+        <td>{{ p.market }}</td>
+        <td>{{ p.horizon }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="7">No open clips. Run a cycle after you seed the desk.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</article>
+
+<article class="panel">
+  <h2>Latest decisions</h2>
+  <table>
+    <thead><tr><th>Name</th><th>Side</th><th>Conf</th><th>Confluence</th><th>Paper</th><th>Live</th></tr></thead>
+    <tbody>
+    {% for s in signals %}
+      <tr>
+        <td><a href="/chart?symbol={{ s.symbol }}">{{ s.symbol }}</a></td>
+        <td>{{ s.side }}</td>
+        <td class="num">{{ '%.0f'|format(s.confidence * 100) }}</td>
+        <td class="num">{{ '%.0f'|format(s.confluence) }}</td>
+        <td>{{ 'yes' if s.paper else '—' }}</td>
+        <td>{{ 'yes' if s.live else '—' }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6">No decisions yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</article>
+{% endblock %}

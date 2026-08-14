@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Watch{% endblock %}
+{% block stage %}
+<section class="hero">
+  <div>
+    <p class="kicker">Watchlist</p>
+    <h1>Active names the cycle reads</h1>
+    <p class="lede">Soft cap 50. Archived names are kept for history and are not scored every day.</p>
+  </div>
+</section>
+<article class="panel">
+  <table>
+    <thead><tr><th>Symbol</th><th>Class</th><th>Status</th><th>Notes</th></tr></thead>
+    <tbody>
+    {% for w in rows %}
+      <tr>
+        <td><a href="/chart?symbol={{ w.symbol }}">{{ w.symbol }}</a></td>
+        <td>{{ w.asset_class }}</td>
+        <td>{{ w.status }}</td>
+        <td>{{ w.notes }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</article>
+{% endblock %}

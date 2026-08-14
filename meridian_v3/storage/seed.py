@@ -1,0 +1,154 @@
+from __future__ import annotations
+
+from datetime import date, datetime, timedelta, timezone
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from meridian_v3.config import get_settings
+from meridian_v3.storage.schema import (
+    AccountState,
+    EquityPoint,
+    OptionLegRow,
+    PriceBar,
+    PriceCache,
+    RegimeState,
+    WatchItem,
+)
+
+
+DEMO_WATCH = (
+    ("RELIANCE", "equity", "Home name — cash book"),
+    ("HDFCBANK", "equity", "Quality compounder"),
+    ("INFY", "equity", "IT beta"),
+    ("TCS", "equity", "Cash-rich IT"),
+    ("TATAMOTORS", "equity", "Cyclical tape"),
+    ("NIFTY", "index", "Options buying only, when the signal is huge"),
+    ("USDINR", "fx", "Nano/micro only"),
+)
+
+
+def _bars(symbol: str, last: float, days: int = 80) -> list[PriceBar]:
+    rows: list[PriceBar] = []
+    px = last * 0.92
+    start = date.today() - timedelta(days=days)
+    for i in range(days):
+        drift = (last - px) / max(days - i, 1)
+        noise = ((i * 17) % 7 - 3) * last * 0.002
+        o = px
+        c = px + drift + noise
+        h = max(o, c) * 1.006
+        l = min(o, c) * 0.994
+        rows.append(
+            PriceBar(
+                symbol=symbol,
+                bar_date=start + timedelta(days=i),
+                open=round(o, 2),
+                high=round(h, 2),
+                low=round(l, 2),
+                close=round(c, 2),
+                volume=1_000_000 + i * 2500,
+            )
+        )
+        px = c
+    return rows
+
+
+def seed_demo(session: Session, *, reset: bool = False) -> int:
+    settings = get_settings()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    if reset:
+        for table in (
+            WatchItem, PriceBar, PriceCache, AccountState, EquityPoint,
+            OptionLegRow, RegimeState,
+        ):
+            session.query(table).delete()
+        session.flush()
+
+    existing = session.scalar(select(WatchItem.id).limit(1))
+    if existing and not reset:
+        return 0
+
+    for symbol, klass, notes in DEMO_WATCH:
+        session.add(
+            WatchItem(
+                symbol=symbol, asset_class=klass, status="active",
+                notes=notes, created_at=now, updated_at=now,
+            )
+        )
+
+    marks = {
+        "RELIANCE": 1384.0,
+        "HDFCBANK": 1662.0,
+        "INFY": 1488.0,
+        "TCS": 3125.0,
+        "TATAMOTORS": 678.0,
+        "NIFTY": 24480.0,
+        "USDINR": 83.55,
+    }
+    for symbol, last in marks.items():
+        bars = _bars(symbol, last)
+        session.add_all(bars)
+        closes = [b.close for b in bars]
+        highs = [b.high for b in bars]
+        lows = [b.low for b in bars]
+        session.add(
+            PriceCache(
+                symbol=symbol,
+                last=closes[-1],
+                prev_close=closes[-2],
+                sma20=sum(closes[-20:]) / 20,
+                sma50=sum(closes[-50:]) / min(50, len(closes)),
+                high20=max(highs[-20:]),
+                low20=min(lows[-20:]),
+                volume=bars[-1].volume,
+                prev_volume=bars[-2].volume,
+                atr=sum(h - l for h, l in zip(highs[-14:], lows[-14:])) / 14,
+                as_of=now,
+                quality="seed",
+            )
+        )
+
+    start = settings.account.starting_equity_inr
+    for venue in ("paper", "live"):
+        session.add(
+            AccountState(
+                venue=venue,
+                name=settings.account.name,
+                cash=start,
+                equity=start,
+                peak=start,
+                live_armed=0,
+                updated_at=now,
+            )
+        )
+        session.add(EquityPoint(venue=venue, as_of=now, equity=start, cash=start, peak=start))
+
+    session.add(
+        OptionLegRow(
+            leg_id="demo-nifty-ce",
+            symbol="NIFTY",
+            contract_label="NIFTY 24400 CE",
+            lots=1,
+            multiplier=75,
+            mark_inr=120.0,
+            delta=0.42,
+            gamma=0.012,
+            vega_per_lot=18.0,
+            theta_per_lot=-8.5,
+            iv=0.13,
+            greeks_as_of=now,
+            stale=0,
+        )
+    )
+    session.add(
+        RegimeState(
+            desk="Elevated",
+            tape="trending",
+            vol="low_vol",
+            reason="Seeded desk · mixed tape · starting ₹5,000 book",
+            as_of=now,
+        )
+    )
+    session.flush()
+    return len(DEMO_WATCH)

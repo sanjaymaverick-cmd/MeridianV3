@@ -1,0 +1,142 @@
+app:
+  name: MERIDIAN V3
+  subtitle: Personal auto-trading desk · India
+  host: 127.0.0.1
+  port: 8777
+  theme: dark
+  open_browser: true
+
+paths:
+  data_dir: ~/MeridianV3
+  db_filename: meridian_v3.db
+  log_dir: ~/MeridianV3/logs
+  import_dir: ~/MeridianV3/imports
+
+account:
+  starting_equity_inr: 5000
+  currency: INR
+  compound_profits: true
+  name: Meridian Dedicated
+
+markets:
+  default: equity_cash
+  priority:
+    - equity_cash
+    - options_buy
+    - forex_micro
+  equity_cash:
+    enabled: true
+    home: true
+    lot_step: 1
+    min_notional: 1
+  options_buy:
+    enabled: true
+    buying_only: true
+    selling_forbidden: true
+    min_premium_inr: 50
+    max_premium_pct_of_equity: 0.12
+  forex_micro:
+    enabled: true
+    nano_lots: true
+    micro_lots: true
+    standard_lots_forbidden: true
+    min_lot: 0.01
+
+sizing:
+  kelly_fraction: 0.15
+  min_kelly_fraction: 0.05
+  max_kelly_fraction: 0.25
+  atr_stop_mult: 1.5
+  atr_period: 14
+  max_risk_pct_high_conf: 0.04
+  max_risk_pct_normal: 0.015
+  max_risk_pct_low: 0.008
+  min_risk_inr: 25
+  high_confidence: 0.78
+  live_confidence: 0.82
+  positional_confidence: 0.88
+  max_concurrent_normal: 2
+  max_concurrent_high: 4
+  max_position_pct: 0.35
+  cash_reserve_pct: 0.10
+
+safety:
+  drawdown_pause_pct: 0.20
+  drawdown_scale_start_pct: 0.08
+  max_daily_live_trades: 3
+  max_daily_live_high_conf: 6
+  overnight_equity_ok: true
+  overnight_options_forbidden: true
+  overnight_fx_forbidden: true
+  flatten_before_close_minutes: 20
+  session_open: "09:15"
+  session_close: "15:30"
+  timezone: Asia/Kolkata
+
+decision:
+  paper_all_signals: true
+  live_requires_arm: true
+  live_min_confidence: 0.82
+  live_min_confluence: 62
+  edge_safety_margin: 0.0015
+  freshness_half_life_hours: 6
+  min_freshness: 0.35
+  walkforward_oos_gap_max: 0.35
+
+regime:
+  vix_calm_max: 14.0
+  vix_elevated_max: 20.0
+  vix_stress_exit: 18.0
+  vix_elevated_exit_to_calm: 12.5
+  ewma_vol_elevated: 0.16
+  ewma_vol_stress: 0.24
+  trend_z_risk_off: -1.2
+  trend_z_risk_on: 1.0
+  min_hold_days: 2
+  confirmation_days: 2
+  default_label: Elevated
+
+greeks:
+  move_pct: 0.01
+  rehedge_band_lots: 1.0
+  vega_limit: 200000
+  warn_utilization: 0.80
+  lot_step: 1.0
+
+watchlist:
+  active_cap: 50
+
+alerts:
+  poll_seconds: 60
+  min_days_between_prompts: 2
+  snooze_hours: 24
+
+providers:
+  yfinance_enabled: true
+  price_ttl_minutes: 15
+  request_sleep_ms: 400
+
+modules:
+  watchlist: true
+  scoring: true
+  greeks: true
+  gamma_scalp: true
+  vega: true
+  paper: true
+  live: true
+  import: true
+  charts: true
+  alerts: true
+  mcx: true
+  fx: true
+
+fx:
+  pairs:
+    - USDINR
+    - EURUSD
+    - USDJPY
+  move_review_pct: 1.0
+
+hedge:
+  roll_blackout_days: 3
+  min_days_between_prompts: 2

@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Greeks{% endblock %}
+{% block stage %}
+<section class="hero">
+  <div>
+    <p class="kicker">Greeks · V2 engine</p>
+    <h1>Delta, gamma, vega, theta — in plain words</h1>
+    <p class="lede">Daily PnL is time. Gamma Scalping PnL is the extra from a move. Long gamma can help. Short gamma can hurt. This page is a review (not an order).</p>
+  </div>
+</section>
+<article class="panel">
+  <h2>{{ symbol }} review</h2>
+  <div id="review-root" data-symbol="{{ symbol }}">Loading the review…</div>
+</article>
+<article class="panel">
+  <div class="chart-box" data-symbol="{{ symbol }}" data-height="360"></div>
+</article>
+{% endblock %}

@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Decisions{% endblock %}
+{% block stage %}
+<section class="hero">
+  <div>
+    <p class="kicker">Auto decision</p>
+    <h1>What the engine just said</h1>
+    <p class="lede">Reviews always say “(not an order)”. A paper or live fill is written on a different card.</p>
+  </div>
+</section>
+<article class="panel">
+  <h2>Pending reviews</h2>
+  {% for ev in events %}
+    <div class="review-card">
+      <p class="meta">{{ ev.symbol }} · {{ ev.created_at }}</p>
+      <p>{{ ev.copy_review }}</p>
+    </div>
+  {% else %}
+    <p class="note">No reviews yet. Run one cycle.</p>
+  {% endfor %}
+</article>
+<article class="panel">
+  <h2>Decision log</h2>
+  <table>
+    <thead><tr><th>When</th><th>Name</th><th>Side</th><th>Conf</th><th>Market</th><th>Paper</th><th>Live</th><th>Why</th></tr></thead>
+    <tbody>
+    {% for s in rows %}
+      <tr>
+        <td class="num">{{ s.created_at.strftime('%d %b %H:%M') }}</td>
+        <td>{{ s.symbol }}</td>
+        <td>{{ s.side }}</td>
+        <td class="num">{{ '%.0f'|format(s.confidence * 100) }}</td>
+        <td>{{ s.market }}</td>
+        <td>{{ 'yes' if s.paper else '—' }}</td>
+        <td>{{ 'yes' if s.live else '—' }}</td>
+        <td class="wrap">{{ s.reason }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</article>
+{% endblock %}

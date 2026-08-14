@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Safety{% endblock %}
+{% block stage %}
+<section class="hero">
+  <div>
+    <p class="kicker">Safety</p>
+    <h1>Capital first. Live is a privilege.</h1>
+    <p class="lede">If the live book falls 20% from its peak, new live trades pause. Open positions may stay. Paper never stops learning.</p>
+  </div>
+</section>
+<div class="grid-2">
+  <article class="panel">
+    <h2>Live switch</h2>
+    <p class="note">Default is off. Arm only when you have plugged a broker adapter and you accept live risk on the ₹5,000 book.</p>
+    <form method="post" action="/desk/arm" class="inline">
+      <input type="hidden" name="on" value="1">
+      <button class="btn primary" type="submit">Arm live</button>
+    </form>
+    <form method="post" action="/desk/arm" class="inline">
+      <input type="hidden" name="on" value="0">
+      <button class="btn" type="submit">Disarm live</button>
+    </form>
+    {% if live %}
+    <p class="meta">State: {{ 'ARMED' if live.live_armed else 'disarmed' }}</p>
+    {% endif %}
+  </article>
+  <article class="panel">
+    <h2>Drawdown</h2>
+    {% if live_dd %}
+    <p class="figure">{{ '%.0f'|format(live_dd.drawdown * 100) }}%</p>
+    <p class="note">{{ live_dd.reason }}</p>
+    {% endif %}
+    {% if paper_dd %}
+    <p class="meta">Paper: {{ paper_dd.reason }}</p>
+    {% endif %}
+  </article>
+</div>
+<article class="panel">
+  <h2>Hard rules on this book</h2>
+  <ul class="plain">
+    <li>Equity cash is home. Options = buying only. Forex = nano/micro only.</li>
+    <li>New live trades pause at 20% drawdown from peak.</li>
+    <li>Most clips are same-day. 1–3 day holds only on very high confidence.</li>
+    <li>Flexible daily live cap. More only when confidence is very high.</li>
+    <li>Every review still says “(not an order)”.</li>
+  </ul>
+</article>
+{% endblock %}

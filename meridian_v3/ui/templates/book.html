@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Paper / Live{% endblock %}
+{% block stage %}
+<section class="hero">
+  <div>
+    <p class="kicker">Hybrid book</p>
+    <h1>Paper learns. Live is rare.</h1>
+    <p class="lede">The two books never mix. Compare them here. Compounding happens inside each book.</p>
+  </div>
+</section>
+<div class="grid-2">
+  <article class="panel">
+    <h2>Paper positions</h2>
+    <table>
+      <thead><tr><th>Name</th><th>Side</th><th>Qty</th><th>Avg</th><th>Status</th></tr></thead>
+      <tbody>
+      {% for p in paper_pos %}
+        <tr><td>{{ p.symbol }}</td><td>{{ p.side }}</td><td class="num">{{ p.qty }}</td><td class="num">{{ p.avg_price | inr }}</td><td>{{ p.status }}</td></tr>
+      {% else %}
+        <tr><td colspan="5">Empty.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </article>
+  <article class="panel">
+    <h2>Live positions</h2>
+    <table>
+      <thead><tr><th>Name</th><th>Side</th><th>Qty</th><th>Avg</th><th>Status</th></tr></thead>
+      <tbody>
+      {% for p in live_pos %}
+        <tr><td>{{ p.symbol }}</td><td>{{ p.side }}</td><td class="num">{{ p.qty }}</td><td class="num">{{ p.avg_price | inr }}</td><td>{{ p.status }}</td></tr>
+      {% else %}
+        <tr><td colspan="5">Empty. Live stays off until you arm it and a very strong signal appears.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </article>
+</div>
+<article class="panel">
+  <h2>Fills</h2>
+  <table>
+    <thead><tr><th>When</th><th>Venue</th><th>Name</th><th>Side</th><th>Qty</th><th>Price</th><th>Note</th></tr></thead>
+    <tbody>
+    {% for f in fills %}
+      <tr>
+        <td class="num">{{ f.filled_at.strftime('%d %b %H:%M') }}</td>
+        <td>{{ f.venue }}</td>
+        <td>{{ f.symbol }}</td>
+        <td>{{ f.side }}</td>
+        <td class="num">{{ f.qty }}</td>
+        <td class="num">{{ f.price | inr }}</td>
+        <td class="wrap">{{ f.note }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="7">No fills yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</article>
+{% endblock %}
