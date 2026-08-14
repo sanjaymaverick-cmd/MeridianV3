@@ -57,7 +57,10 @@ def _seed(*, reset: bool) -> int:
     try:
         written = seed_demo(session, reset=reset)
         session.commit()
-        print(f"seeded {written} watch names" if written else "desk already has data")
+        if written:
+            print(f"seeded / refreshed {written} demo piece(s)")
+        else:
+            print("demo desk already complete — nothing new to add")
         return 0
     finally:
         session.close()

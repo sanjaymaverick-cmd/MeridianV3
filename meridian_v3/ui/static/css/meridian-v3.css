@@ -78,7 +78,15 @@ button, .btn { cursor: pointer; }
   border-top: 1px solid var(--line); color: var(--ash); font-size: 11px; align-items: center;
 }
 
+.notice {
+  margin: 0 0 var(--space-5);
+  padding: 10px 12px;
+  border: 1px solid var(--line-gold);
+  color: var(--ivory);
+  background: var(--panel-2);
+}
 .hero { margin-bottom: var(--space-6); }
+.hero .inline { margin-top: 14px; }
 .kicker { font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--gold); margin: 0 0 6px; }
 h1 { font-size: 26px; font-weight: 400; margin: 0 0 8px; }
 .lede { max-width: 62ch; }

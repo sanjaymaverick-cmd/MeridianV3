@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -43,6 +44,10 @@ TEMPLATES.env.filters["pct"] = _pct_filter
 router = APIRouter()
 
 
+def _q(text: str) -> str:
+    return quote(text, safe="")
+
+
 def _render(request: Request, name: str, active: str, **extra):
     return TEMPLATES.TemplateResponse(request, name, _ctx(request, active, **extra))
 
@@ -71,6 +76,7 @@ def _ctx(request: Request, active: str, **extra):
         "live": live,
         "pending_count": pending,
         "modules": settings.modules,
+        "notice": request.query_params.get("notice", ""),
         **extra,
     }
 
@@ -180,16 +186,29 @@ def help_page(request: Request):
 
 @router.post("/desk/cycle")
 def desk_cycle(request: Request):
-    run_cycle(request.state.session)
+    result = run_cycle(request.state.session)
     request.state.session.commit()
-    return RedirectResponse("/", status_code=303)
+    notice = (
+        f"Cycle finished. Paper fills: {result['paper_opened']}. "
+        f"Hold: {result.get('holds', 0)}. Live stays disarmed."
+    )
+    return RedirectResponse("/?notice=" + _q(notice), status_code=303)
 
 
 @router.post("/desk/seed")
 def desk_seed(request: Request):
-    seed_demo(request.state.session)
+    added = seed_demo(request.state.session)
+    result = run_cycle(request.state.session)
     request.state.session.commit()
-    return RedirectResponse("/", status_code=303)
+    if added:
+        head = f"Demo desk refreshed. Added {added} missing piece(s)."
+    else:
+        head = "Demo desk was already in place. Ran a fresh cycle."
+    notice = (
+        f"{head} Paper fills this pass: {result['paper_opened']}. "
+        "Open Paper / Live to see the tickets."
+    )
+    return RedirectResponse("/?notice=" + _q(notice), status_code=303)
 
 
 @router.post("/desk/arm")
