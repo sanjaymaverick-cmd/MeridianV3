@@ -11,6 +11,17 @@ def test_meta_label_skips_flat():
     assert out.take is False
 
 
+def test_cold_start_takes_a_clear_setup():
+    from meridian_v3.engine.meta_label import default_features
+
+    feats = default_features(
+        confluence=78, freshness=1.0, atr_pct=0.015, regime_fit=0.6, primary_score=1.4, cost_pct=0.002
+    )
+    out = meta_label(PrimarySignal(1, 1.4, "trend is up"), feats, min_p=0.52)
+    assert out.take is True
+    assert out.p_success > 0.52
+
+
 def test_online_logit_learns():
     model = OnlineLogit(lr=0.2)
     feats = {"confluence": 0.8, "freshness": 1.0}

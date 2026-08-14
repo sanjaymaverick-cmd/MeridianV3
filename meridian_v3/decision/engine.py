@@ -54,6 +54,7 @@ class DecisionInput:
     robustness: Robustness | None = None
     options_allowed: bool = True
     forex_allowed: bool = True
+    held_qty: float = 0.0
 
 
 @dataclass
@@ -119,16 +120,24 @@ def decide(inp: DecisionInput, settings: Settings | None = None) -> AutoDecision
     elif inp.primary.direction < 0 and conf.side <= 0 and meta.take and not fresh.stale:
         action = "sell"
 
+    if action == "sell" and route.market == "equity_cash" and inp.held_qty <= 1e-9:
+        action = "hold"
+        reasons.append(
+            "This cash book does not short. A sell is only used to close a paper long we already hold."
+        )
+
+    paper_margin = max(settings.decision.edge_safety_margin * inp.equity * 0.25, 2.0)
     edge = filter_edge(
         p=meta.p_success,
         win_rupees=inp.win_rupees,
         loss_rupees=inp.loss_rupees,
         costs=inp.costs,
-        margin=max(settings.decision.edge_safety_margin * inp.equity, 8.0),
+        margin=paper_margin,
     )
     if action != "hold" and not edge.take:
         action = "hold"
         reasons.append(edge.reason)
+    reasons.append(meta.reason)
 
     if fresh.stale:
         action = "hold"

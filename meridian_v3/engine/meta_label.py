@@ -96,8 +96,15 @@ class OnlineLogit:
         self.lr = lr
         self.bias = 0.0
         self.weights: dict[str, float] = {}
+        self.updates = 0
+
+    @property
+    def trained(self) -> bool:
+        return self.updates > 0
 
     def predict(self, features: dict[str, float]) -> float:
+        if not self.trained:
+            return _cold_start_p(features)
         z = self.bias
         for key, value in features.items():
             z += self.weights.get(key, 0.0) * value
@@ -110,7 +117,18 @@ class OnlineLogit:
         self.bias += self.lr * err
         for key, value in features.items():
             self.weights[key] = self.weights.get(key, 0.0) + self.lr * err * value
+        self.updates += 1
         return self.predict(features)
+
+
+def _cold_start_p(features: dict[str, float]) -> float:
+    """A new book has no paper history. Read the features instead of saying 50/50."""
+    z = 0.20
+    z += 0.90 * (features.get("confluence", 0.5) - 0.5)
+    z += 0.55 * features.get("primary", 0.0)
+    z += 0.25 * (features.get("freshness", 1.0) - 0.5)
+    z += 0.15 * (features.get("cheap", 0.5) - 0.5)
+    return _sigmoid(z)
 
 
 def default_features(

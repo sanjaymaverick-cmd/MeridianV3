@@ -28,3 +28,4 @@ def test_seed_and_cycle(session):
     seed_demo(session, reset=True)
     result = run_cycle(session)
     assert result["decided"] >= 1
+    assert result["paper_opened"] >= 1

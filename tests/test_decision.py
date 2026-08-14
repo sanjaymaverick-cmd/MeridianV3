@@ -48,9 +48,9 @@ def test_hold_when_no_primary():
 
 def test_paper_not_live_when_disarmed():
     d = decide(_input(), Settings())
-    if d.action != "hold":
-        assert d.paper is True
-        assert d.live is False
+    assert d.action == "buy"
+    assert d.paper is True
+    assert d.live is False
 
 
 def test_drawdown_blocks_live():
