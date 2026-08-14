@@ -46,4 +46,4 @@ def test_seed_post_shows_notice(session):
     client = TestClient(create_app())
     res = client.post("/desk/seed", follow_redirects=True)
     assert res.status_code == 200
-    assert b"Paper fills" in res.content
+    assert b"Paper auto" in res.content or b"Paper fills" in res.content

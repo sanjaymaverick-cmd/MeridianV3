@@ -44,6 +44,15 @@ def create_app() -> FastAPI:
     app.include_router(ui_router)
     app.include_router(api_router, prefix="/api")
 
+    @app.on_event("startup")
+    def _start_paper_auto() -> None:
+        import os
+
+        from meridian_v3.autopilot import start_autopilot
+
+        if settings.alerts.auto_start and not os.environ.get("MERIDIAN_V3_TEST_DB"):
+            start_autopilot()
+
     @app.get("/favicon.ico", include_in_schema=False)
     def favicon() -> FileResponse:
         ico = STATIC_DIR / "favicon.ico"

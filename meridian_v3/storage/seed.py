@@ -24,6 +24,7 @@ DEMO_WATCH = (
     ("TCS", "equity", "Cash-rich IT"),
     ("TATAMOTORS", "equity", "Cyclical tape"),
     ("NIFTY", "index", "Options buying only, when the signal is huge"),
+    ("GOLD", "commodity", "MCX-style gold via a listed proxy — paper only"),
     ("USDINR", "fx", "Nano/micro only"),
 )
 
@@ -97,6 +98,7 @@ def ensure_demo(session: Session) -> int:
         "TCS": 3125.0,
         "TATAMOTORS": 678.0,
         "NIFTY": 24480.0,
+        "GOLD": 7250.0,
         "USDINR": 83.55,
     }
     for symbol, last in marks.items():

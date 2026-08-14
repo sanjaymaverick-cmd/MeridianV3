@@ -19,6 +19,8 @@ def _tickers_for(symbol: str) -> list[str]:
         return ["USDINR=X", "INR=X"]
     if symbol == "NIFTY":
         return ["^NSEI", "^NSEBANK"]
+    if symbol == "GOLD":
+        return ["GOLDBEES.NS", "GC=F", "GOLD.NS"]
     parsed = normalize_symbol(symbol)
     return yahoo_candidates(parsed.symbol, parsed.exchange, parsed.yahoo)
 

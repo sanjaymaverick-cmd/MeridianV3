@@ -13,6 +13,7 @@ from meridian_v3.config import get_settings
 from meridian_v3.domain.money import format_inr, format_pct
 from meridian_v3.engine.drawdown import assess_drawdown
 from meridian_v3.ingestion.service import ImportService
+from meridian_v3.autopilot import is_running, last_error, set_paper_auto, tick
 from meridian_v3.pipeline import run_cycle
 from meridian_v3.storage.db import get_session
 from meridian_v3.storage.schema import (
@@ -77,6 +78,11 @@ def _ctx(request: Request, active: str, **extra):
         "pending_count": pending,
         "modules": settings.modules,
         "notice": request.query_params.get("notice", ""),
+        "auto_on": bool(paper.paper_auto) if paper else False,
+        "auto_running": is_running(),
+        "auto_note": (paper.last_cycle_note if paper else "") or "",
+        "auto_at": paper.last_cycle_at if paper else None,
+        "auto_error": last_error(),
         **extra,
     }
 
@@ -198,16 +204,31 @@ def desk_cycle(request: Request):
 @router.post("/desk/seed")
 def desk_seed(request: Request):
     added = seed_demo(request.state.session)
-    result = run_cycle(request.state.session)
+    set_paper_auto(request.state.session, True)
+    result = tick(request.state.session)
     request.state.session.commit()
-    if added:
-        head = f"Demo desk refreshed. Added {added} missing piece(s)."
-    else:
-        head = "Demo desk was already in place. Ran a fresh cycle."
-    notice = (
-        f"{head} Paper fills this pass: {result['paper_opened']}. "
-        "Open Paper / Live to see the tickets."
+    head = (
+        f"Demo desk refreshed. Added {added} missing piece(s)."
+        if added
+        else "Demo desk was already in place."
     )
+    notice = (
+        f"{head} Paper auto is ON. It will keep choosing and paper-trading "
+        f"while this window is open. This pass: {result.get('note', '')}"
+    )
+    return RedirectResponse("/?notice=" + _q(notice), status_code=303)
+
+
+@router.post("/desk/auto")
+def desk_auto(request: Request, on: str = Form("1")):
+    want = on == "1"
+    set_paper_auto(request.state.session, want)
+    if want:
+        tick(request.state.session)
+        notice = "Paper auto is ON. The demo account will keep trading on its own."
+    else:
+        notice = "Paper auto is OFF. Nothing new will be paper-traded until you start it again."
+    request.state.session.commit()
     return RedirectResponse("/?notice=" + _q(notice), status_code=303)
 
 

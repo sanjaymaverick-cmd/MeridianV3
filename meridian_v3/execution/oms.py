@@ -131,6 +131,63 @@ class OrderManager:
             else:
                 row.qty = new_qty
 
+    def close_position(self, pos: Position, *, price: float, reason: str) -> dict:
+        """Close an open paper (or live) clip at a mark. Used by the autopilot."""
+        if pos.status != "open" or pos.qty <= 0:
+            return {"ok": False, "message": "already closed"}
+        exit_side = "sell" if pos.side == "buy" else "buy"
+        cid = f"{pos.venue}-x{uuid4().hex[:10]}"
+        req = OrderRequest(
+            client_id=cid,
+            symbol=pos.symbol,
+            side=exit_side,
+            qty=pos.qty,
+            price=price,
+            market=pos.market,
+            venue=pos.venue,
+        )
+        broker = self.paper if pos.venue == "paper" else self.live
+        result = broker.place(req)
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        order = Order(
+            client_id=cid,
+            broker_id=result.broker_id,
+            venue=pos.venue,
+            market=pos.market,
+            symbol=pos.symbol,
+            side=exit_side,
+            qty=pos.qty,
+            limit_price=price,
+            status=result.status,
+            message=result.message,
+            created_at=now,
+        )
+        self.session.add(order)
+        self.session.flush()
+        if not result.ok:
+            return {"ok": False, "message": result.message}
+        pnl = (price - pos.avg_price) * pos.qty
+        if pos.side == "sell":
+            pnl = -pnl
+        fill = Fill(
+            order_id=order.id,
+            venue=pos.venue,
+            symbol=pos.symbol,
+            side=exit_side,
+            qty=result.filled_qty,
+            price=result.avg_price,
+            fees=0.0,
+            filled_at=now,
+            note=f"{'PAPER' if pos.venue == 'paper' else 'LIVE'} EXIT: {reason}  P&L ₹{pnl:,.0f}",
+        )
+        self.session.add(fill)
+        pos.status = "closed"
+        pos.qty = 0
+        pos.closed_at = now
+        self._touch_account(pos.venue, result)
+        self.session.flush()
+        return {"ok": True, "pnl": pnl, "reason": reason}
+
     def _touch_account(self, venue: str, result) -> None:
         acct = self.session.query(AccountState).filter(AccountState.venue == venue).one_or_none()
         if acct is None:

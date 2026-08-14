@@ -139,6 +139,8 @@ class AlertsCfg(BaseModel):
     poll_seconds: int = 60
     min_days_between_prompts: int = 2
     snooze_hours: int = 24
+    auto_start: bool = True
+    price_every_cycles: int = 5
 
 
 class ProvidersCfg(BaseModel):

@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from meridian_v3.config import get_settings
 from meridian_v3.decision.engine import DecisionInput, decide
 from meridian_v3.engine.atr import average_true_range
-from meridian_v3.engine.bayesian import BetaBelief
+from meridian_v3.engine.bayesian import BetaBelief, update_belief
 from meridian_v3.engine.confluence import FactorVote
 from meridian_v3.engine.drawdown import assess_drawdown
 from meridian_v3.engine.edge import estimate_equity_costs
@@ -45,6 +45,36 @@ def _account(session: Session, venue: str) -> AccountState:
     if row is None:
         raise RuntimeError("desk is not seeded")
     return row
+
+
+def persist_belief(session: Session, won: bool, rule: str = "core") -> BetaBelief:
+    row = session.scalar(select(BeliefRow).where(BeliefRow.rule_name == rule))
+    if row is None:
+        row = BeliefRow(rule_name=rule, alpha=4.0, beta=4.0, wins=0, losses=0)
+        session.add(row)
+        session.flush()
+    belief = update_belief(BetaBelief(row.alpha, row.beta, row.wins, row.losses), won)
+    row.alpha = belief.alpha
+    row.beta = belief.beta
+    row.wins = belief.wins
+    row.losses = belief.losses
+    return belief
+
+
+def mark_to_market(session: Session, venue: str = "paper") -> float:
+    acct = _account(session, venue)
+    open_pos = list(
+        session.scalars(select(Position).where(Position.venue == venue, Position.status == "open"))
+    )
+    value = 0.0
+    for pos in open_pos:
+        cache = session.scalar(select(PriceCache).where(PriceCache.symbol == pos.symbol))
+        last = cache.last if cache and cache.last else pos.avg_price
+        value += pos.qty * last
+    acct.equity = acct.cash + value
+    acct.peak = max(acct.peak, acct.equity)
+    acct.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    return acct.equity
 
 
 def run_cycle(session: Session, *, live_armed: bool | None = None) -> dict:

@@ -20,6 +20,9 @@ class AccountState(Base):
     equity: Mapped[float] = mapped_column(Float, default=5000.0)
     peak: Mapped[float] = mapped_column(Float, default=5000.0)
     live_armed: Mapped[int] = mapped_column(Integer, default=0)
+    paper_auto: Mapped[int] = mapped_column(Integer, default=1)
+    last_cycle_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_cycle_note: Mapped[str] = mapped_column(Text, default="")
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 

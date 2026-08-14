@@ -37,6 +37,7 @@
       <span class="regime {{ regime.tone }}"><span class="dot"></span>{{ regime.label }}</span>
       <span class="badge">ACK {{ pending_count }}</span>
       <span class="badge {{ 'live' if live and live.live_armed else '' }}">{{ 'LIVE ARMED' if live and live.live_armed else 'PAPER' }}</span>
+      <span class="badge">AUTO {{ 'ON' if auto_on else 'OFF' }}</span>
       <span class="num">{{ now.strftime('%d %b %Y  %H:%M') }}</span>
       <button class="btn" type="button" data-theme-toggle>Light</button>
     </div>
@@ -46,7 +47,7 @@
     <aside class="rail">
       <section>
         <h2>Dedicated book</h2>
-        <p class="rail-note">Starting capital <strong>₹5,000</strong>. Profits stay in the book. Equity cash is home.</p>
+        <p class="rail-note">Starting capital <strong>₹5,000</strong>. Paper auto trades this book by itself. Equity cash is home.</p>
         {% if paper %}
         <p class="rail-meta">Paper {{ paper.equity | inr }}</p>
         {% endif %}
