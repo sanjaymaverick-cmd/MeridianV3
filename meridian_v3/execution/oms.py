@@ -46,7 +46,7 @@ class OrderManager:
             symbol=decision.symbol,
             side=decision.action,
             qty=decision.size.qty,
-            price=decision.size.notional / decision.size.qty if decision.size.qty else None,
+            price=_fill_price(decision),
             market=decision.market,
             venue=venue,
             product="MIS" if decision.size.horizon == "intraday" else "CNC",
@@ -170,6 +170,7 @@ class OrderManager:
             market=pos.market,
             venue=pos.venue,
             product=product,
+            extra={"flatten": True},
         )
         broker = self.paper if pos.venue == "paper" else self.live
         result = broker.place(req)
@@ -242,6 +243,20 @@ class OrderManager:
             else:
                 acct.cash = self.live.funds()
             acct.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _fill_price(decision: AutoDecision) -> float | None:
+    """Use the market mark in rupees, never margin / qty.
+
+    Leveraged size plans store cash (margin) in ``notional``. Dividing
+    that by lots used to record GOLD.X at ₹42,000 when the tape was
+    ₹4,20,000 — a one-place decimal slide and a fake P&L.
+    """
+    if decision.price and decision.price > 0:
+        return float(decision.price)
+    if decision.size.qty:
+        return float(decision.size.notional / decision.size.qty)
+    return None
 
 
 def _entry_fees(session: Session, pos: Position) -> float:

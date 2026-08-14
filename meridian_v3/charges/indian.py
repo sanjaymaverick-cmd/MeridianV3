@@ -88,7 +88,7 @@ def levy(
     brokerage = _brokerage(name, kind, turnover)
     stt = _stt(kind, side, turnover)
     exchange = _exchange(kind, turnover)
-    sebi = 0.0 if kind == "crypto" else turnover * SEBI_RATE
+    sebi = 0.0 if kind in {"crypto", "fx", "commodity"} else turnover * SEBI_RATE
     stamp = _stamp(kind, side, turnover)
     gst = GST_RATE * (brokerage + exchange + sebi)
     tds = turnover * 0.01 if kind == "crypto" else 0.0
@@ -115,6 +115,8 @@ def _kind(market: str, product: str) -> str:
         return "crypto"
     if market == "india_futures":
         return "future"
+    if market == "global_commodities":
+        return "commodity"
     if market in {"options_buy", "crypto_options"}:
         return "opt"
     if market == "forex_micro":
@@ -127,7 +129,7 @@ def _kind(market: str, product: str) -> str:
 def _brokerage(broker: str, kind: str, turnover: float) -> float:
     if kind == "crypto":
         return turnover * 0.001
-    if kind == "fx":
+    if kind in {"fx", "commodity"}:
         return min(20.0, turnover * 0.0003)
     if broker == "icici_direct":
         if kind == "delivery":
@@ -159,7 +161,7 @@ def _exchange(kind: str, turnover: float) -> float:
         return turnover * NSE_FUT
     if kind == "opt":
         return turnover * NSE_OPT
-    if kind == "crypto":
+    if kind in {"crypto", "fx", "commodity"}:
         return 0.0
     return turnover * NSE_EQ
 

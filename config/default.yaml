@@ -25,6 +25,7 @@ markets:
     - equity_cash
     - options_buy
     - india_futures
+    - global_commodities
     - crypto_spot
     - crypto_futures
     - crypto_options
@@ -46,6 +47,12 @@ markets:
     lot_step: 0.05
     margin_pct: 0.10
     contract_size: 65
+  global_commodities:
+    enabled: true
+    min_lot: 0.01
+    lot_step: 0.01
+    margin_pct: 0.10
+    min_notional: 200
   crypto_spot:
     enabled: true
     lot_step: 0.0001
@@ -97,6 +104,8 @@ safety:
   overnight_equity_ok: true
   overnight_options_forbidden: true
   overnight_fx_forbidden: true
+  overnight_commodities_ok: true
+  crypto_always_on: true
   flatten_before_close_minutes: 20
   session_open: "09:15"
   session_close: "15:30"
@@ -160,12 +169,19 @@ modules:
   alerts: true
   mcx: true
   fx: true
+  commodities: true
 
 fx:
   pairs:
     - USDINR
     - EURUSD
+    - GBPUSD
     - USDJPY
+    - USDCHF
+    - AUDUSD
+    - USDCAD
+    - EURINR
+    - GBPINR
   move_review_pct: 1.0
 
 hedge:

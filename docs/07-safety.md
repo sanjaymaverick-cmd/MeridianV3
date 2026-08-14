@@ -11,7 +11,7 @@ This account is small. Costs and one bad day matter.
 | Cash reserve | 10% | Never spend the last ₹500 of a ₹5,000 book. |
 | Daily live cap | 3 / 6 | 3 normal, 6 only on very high-confidence days. |
 | Concurrent | 2 / 4 | More only when confidence is high and cash remains. |
-| Overnight | options & FX off | Intraday flattened ~20 minutes before 15:30 IST. Equity CNC may stay. |
+| Overnight | options off; FX / commodities follow their own clock | India intraday flattened ~20 minutes before 15:30 IST. Crypto never flattens for session (24/7). FX flattens near Friday 17:00 ET. Global commodities follow the CME/ICE halt. Equity CNC may stay. |
 | Options | buy only | Selling premium is a hard reject. |
 | Forex | nano/micro | Standard lots forbidden. |
 | Live arm | off | No live ticket until a human arms the desk **and** a broker is plugged in. |

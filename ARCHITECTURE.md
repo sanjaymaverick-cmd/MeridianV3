@@ -41,9 +41,10 @@ meridian_v3/
                    confluence, freshness, walk-forward, edge filter)
   decision/        Auto Decision Engine
   capital/         ₹5,000-aware position sizing
-  router/          equity-home multi-market router
+  router/          equity-home multi-market router + per-market clocks
+                   (India 09:15–15:30 IST, crypto 24/7, FX 24/5, CME/ICE)
   execution/       OMS + paper broker + live plugin slot
-  safety/          drawdown, session, overnight
+  safety/          drawdown, per-market session, overnight
   risk/            V2 Greeks / gamma / vega (unchanged math)
   scoring/         V1 five-factor composite (unchanged math)
   signals/         V2 families + chart DTO

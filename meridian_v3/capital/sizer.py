@@ -176,6 +176,21 @@ def size_position(
             False,
         )
 
+    if market == "global_commodities":
+        return _crypto_size(
+            equity=equity,
+            spendable=spendable,
+            price=price,
+            atr=atr,
+            risk_rupees=risk_rupees,
+            risk_pct=risk_pct,
+            kelly_frac=kelly.sized,
+            settings=settings,
+            market=market,
+            margin_mult=1.0,
+            word="global commodity (USD mark × USDINR, full rupee notional)",
+        )
+
     if market == "forex_micro":
         lot = settings.markets.forex_micro.min_lot
         notional = lot * price
@@ -188,7 +203,8 @@ def size_position(
         return SizePlan(
             lot, notional, risk_rupees, risk_pct, kelly.sized, atr * settings.sizing.atr_stop_mult,
             market, "intraday",
-            f"Forex nano/micro only: {lot:g} lot. Standard lots are forbidden.",
+            f"Forex nano/micro only: {lot:g} lot. Standard lots are forbidden. "
+            f"FX runs Sunday–Friday, including after the NSE close.",
             False,
         )
 
@@ -248,7 +264,12 @@ def _crypto_size(
     margin_mult: float,
     word: str,
 ) -> SizePlan:
-    spec = settings.markets.crypto_spot if market == "crypto_spot" else settings.markets.crypto_futures
+    if market == "crypto_futures":
+        spec = settings.markets.crypto_futures
+    elif market == "global_commodities":
+        spec = settings.markets.global_commodities
+    else:
+        spec = settings.markets.crypto_spot
     step = spec.lot_step
     stop = max(atr * settings.sizing.atr_stop_mult, price * 0.008, 0.01)
     raw = risk_rupees / stop if stop else 0.0

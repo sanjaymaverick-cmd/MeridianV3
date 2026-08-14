@@ -50,6 +50,7 @@ class DecisionInput:
     forex_score: float
     crypto_score: float = 0.0
     futures_score: float = 0.0
+    commodity_score: float = 0.0
     preferred_market: str | None = None
     now: datetime | None = None
     belief: BetaBelief | None = None
@@ -78,6 +79,7 @@ class AutoDecision:
     reasons: list[str] = field(default_factory=list)
     route: Route | None = None
     meta: MetaLabel | None = None
+    price: float = 0.0
 
 
 def decide(inp: DecisionInput, settings: Settings | None = None) -> AutoDecision:
@@ -115,6 +117,7 @@ def decide(inp: DecisionInput, settings: Settings | None = None) -> AutoDecision
         forex_score=inp.forex_score,
         crypto_score=inp.crypto_score,
         futures_score=inp.futures_score,
+        commodity_score=inp.commodity_score,
         options_allowed=inp.options_allowed,
         forex_allowed=inp.forex_allowed,
         preferred=inp.preferred_market,
@@ -126,7 +129,12 @@ def decide(inp: DecisionInput, settings: Settings | None = None) -> AutoDecision
     elif inp.primary.direction < 0 and conf.side <= 0 and meta.take and not fresh.stale:
         action = "sell"
 
-    short_ok = route.market in {"india_futures", "crypto_futures", "forex_micro"}
+    short_ok = route.market in {
+        "india_futures",
+        "crypto_futures",
+        "forex_micro",
+        "global_commodities",
+    }
     if action == "sell" and not short_ok and inp.held_qty <= 1e-9:
         action = "hold"
         reasons.append(
@@ -223,4 +231,5 @@ def decide(inp: DecisionInput, settings: Settings | None = None) -> AutoDecision
         reasons=reasons,
         route=route,
         meta=meta,
+        price=inp.price,
     )

@@ -190,7 +190,7 @@ def ensure_demo(session: Session) -> int:
                 desk="Elevated",
                 tape="trending",
                 vol="low_vol",
-                reason="Seeded desk · NSE/BSE algo universe · starting ₹50,000 book",
+                reason="Seeded desk · India + crypto + FX + global commodities · starting ₹50,000 book",
                 as_of=now,
             )
         )

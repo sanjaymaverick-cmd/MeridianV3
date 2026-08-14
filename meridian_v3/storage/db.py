@@ -43,6 +43,7 @@ def init_db() -> None:
     engine = get_engine()
     Base.metadata.create_all(engine)
     _migrate(engine)
+    _repair_book()
 
 
 def _migrate(engine) -> None:
@@ -82,6 +83,23 @@ def _migrate(engine) -> None:
         fill_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(fills)")).fetchall()}
         if "charges_json" not in fill_cols:
             conn.execute(text("ALTER TABLE fills ADD COLUMN charges_json TEXT DEFAULT '{}'"))
+
+
+def _repair_book() -> None:
+    if _Session is None:
+        return
+    session = _Session()
+    try:
+        from meridian_v3.storage.repair import repair_margin_priced_clips
+
+        if repair_margin_priced_clips(session):
+            session.commit()
+        else:
+            session.rollback()
+    except Exception:
+        session.rollback()
+    finally:
+        session.close()
 
 
 def get_session() -> Session:

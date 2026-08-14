@@ -1,11 +1,14 @@
 """Paper autopilot.
 
-While the desk is open and paper-auto is on, this loop:
+While paper-auto is on, this loop:
 
   1. refreshes the tape now and then
-  2. exits paper clips (stop, target, opposite signal, near the close)
+  2. exits paper clips (stop, target, opposite signal, or that market's own close)
   3. writes those results into the Bayesian trainer
   4. runs a new decision cycle (paper only unless live is armed)
+
+India cash flattening uses 15:30 IST. Crypto is never flattened for
+session. FX and global commodities use their Sunday–Friday clocks.
 
 Live never starts itself. One click of Seed turns this on.
 """
@@ -24,6 +27,13 @@ from meridian_v3.engine.meta_label import primary_direction, rsi
 from meridian_v3.execution.brokers.paper_broker import PaperBroker
 from meridian_v3.execution.oms import OrderManager
 from meridian_v3.pipeline import mark_to_market, persist_belief, run_cycle
+from meridian_v3.router.calendar import (
+    INDIA_WEEKEND_FLATTEN,
+    coverage_note,
+    india_session,
+    is_india_market,
+    market_session,
+)
 from meridian_v3.safety.guards import session_state
 from meridian_v3.storage.db import desk_lock, get_session
 from meridian_v3.storage.schema import AccountState, Position, PriceBar, PriceCache
@@ -94,14 +104,20 @@ def tick(session: Session, *, refresh_prices: bool | None = None) -> dict:
         if priced.get("failed"):
             price_note += f", {priced['failed']} missing"
 
-    exits = manage_exits(session, in_session=in_session, minutes_to_close=minutes)
+    exits = manage_exits(session, in_session=in_session, minutes_to_close=minutes, now=now)
     result = run_cycle(session, live_armed=False)
     mark_to_market(session, "paper")
     paper = session.scalar(select(AccountState).where(AccountState.venue == "paper"))
     assert paper is not None
-    session_bit = "market open" if in_session else "using last close — market is shut, paper still learns"
+    session_bit = coverage_note(now, settings)
+    india_bit = ""
+    if exits.get("india_closed"):
+        india_bit = (
+            f" Closed {exits['india_closed']} India clip(s) "
+            f"(₹{exits.get('india_freed', 0):,.0f} back to paper). "
+        )
     note = (
-        f"{session_bit}. "
+        f"{session_bit}. {india_bit}"
         f"Exits {exits['closed']}. New paper fills {result['paper_opened']}. "
         f"Hold {result.get('holds', 0)}."
     )
@@ -119,38 +135,146 @@ def tick(session: Session, *, refresh_prices: bool | None = None) -> dict:
     }
 
 
-def manage_exits(session: Session, *, in_session: bool, minutes_to_close: int) -> dict:
+def manage_exits(
+    session: Session,
+    *,
+    in_session: bool,
+    minutes_to_close: int,
+    now: datetime | None = None,
+) -> dict:
     settings = get_settings()
     paper = session.scalar(select(AccountState).where(AccountState.venue == "paper"))
     if paper is None:
-        return {"closed": 0}
+        return {"closed": 0, "india_closed": 0, "india_freed": 0.0, "symbols": []}
+    now = now or datetime.now(timezone.utc)
+    cash_before = float(paper.cash)
     broker = PaperBroker(cash=paper.cash)
     oms = OrderManager(session, broker)
     closed = 0
+    india_closed = 0
+    symbols: list[str] = []
     rows = list(session.scalars(select(Position).where(Position.venue == "paper", Position.status == "open")))
-    flatten = in_session and minutes_to_close <= settings.safety.flatten_before_close_minutes
+    india = india_session(now, settings)
+    india_dark = not india.in_session
+    india_eod = (
+        india.in_session
+        and india.minutes_to_close <= settings.safety.flatten_before_close_minutes
+    )
     for pos in rows:
         cache = session.scalar(select(PriceCache).where(PriceCache.symbol == pos.symbol))
-        if cache is None or not cache.last:
+        last = None
+        if cache is not None and cache.last:
+            last = cache.last
+        elif pos.avg_price:
+            last = pos.avg_price
+        if not last:
             continue
-        last = cache.last
-        reason = _exit_reason(pos, last, cache, flatten=flatten, session=session)
+        weekend_india = india_dark and is_india_market(pos.market)
+        flatten = False
+        if weekend_india:
+            flatten = True
+        elif is_india_market(pos.market) and india_eod:
+            flatten = True
+        else:
+            clock = market_session(now, settings, pos.market or "equity_cash")
+            flatten = (
+                (not clock.always_on)
+                and clock.in_session
+                and clock.minutes_to_close <= settings.safety.flatten_before_close_minutes
+            )
+        reason = _exit_reason(
+            pos,
+            last,
+            cache,
+            flatten=flatten,
+            session=session,
+            weekend_india=weekend_india,
+        )
         if not reason:
             continue
         out = oms.close_position(pos, price=last, reason=reason)
         if out.get("ok"):
             persist_belief(session, won=float(out.get("pnl") or 0) > 0)
             closed += 1
-    return {"closed": closed}
+            symbols.append(pos.symbol)
+            if is_india_market(pos.market):
+                india_closed += 1
+    paper = session.scalar(select(AccountState).where(AccountState.venue == "paper"))
+    freed = max(0.0, float(paper.cash) - cash_before) if paper is not None else 0.0
+    return {
+        "closed": closed,
+        "india_closed": india_closed,
+        "india_freed": freed,
+        "symbols": symbols,
+    }
 
 
-def _exit_reason(pos: Position, last: float, cache, *, flatten: bool, session: Session) -> str:
-    if flatten and pos.horizon == "intraday":
+def flatten_india_paper(
+    session: Session,
+    *,
+    now: datetime | None = None,
+    force: bool = False,
+) -> dict:
+    """Close every open India paper clip and credit the cash back.
+
+    Used on the Friday 15:30 IST → Monday 09:15 IST gap so the book can
+    work crypto / FX / commodities. ``force`` closes even if NSE is open.
+    """
+    settings = get_settings()
+    now = now or datetime.now(timezone.utc)
+    india = india_session(now, settings)
+    if not force and india.in_session and india.minutes_to_close > settings.safety.flatten_before_close_minutes:
+        return {"closed": 0, "india_closed": 0, "india_freed": 0.0, "symbols": [], "note": "India is still open."}
+
+    paper = session.scalar(select(AccountState).where(AccountState.venue == "paper"))
+    if paper is None:
+        return {"closed": 0, "india_closed": 0, "india_freed": 0.0, "symbols": []}
+    cash_before = float(paper.cash)
+    broker = PaperBroker(cash=paper.cash)
+    oms = OrderManager(session, broker)
+    symbols: list[str] = []
+    rows = list(session.scalars(select(Position).where(Position.venue == "paper", Position.status == "open")))
+    for pos in rows:
+        if not is_india_market(pos.market):
+            continue
+        cache = session.scalar(select(PriceCache).where(PriceCache.symbol == pos.symbol))
+        last = cache.last if cache is not None and cache.last else pos.avg_price
+        if not last:
+            continue
+        out = oms.close_position(pos, price=last, reason=INDIA_WEEKEND_FLATTEN)
+        if out.get("ok"):
+            persist_belief(session, won=float(out.get("pnl") or 0) > 0)
+            symbols.append(pos.symbol)
+    paper = session.scalar(select(AccountState).where(AccountState.venue == "paper"))
+    freed = max(0.0, float(paper.cash) - cash_before) if paper is not None else 0.0
+    return {
+        "closed": len(symbols),
+        "india_closed": len(symbols),
+        "india_freed": freed,
+        "symbols": symbols,
+        "cash": float(paper.cash) if paper is not None else 0.0,
+    }
+
+
+def _exit_reason(
+    pos: Position,
+    last: float,
+    cache,
+    *,
+    flatten: bool,
+    session: Session,
+    weekend_india: bool = False,
+) -> str:
+    if weekend_india:
+        return INDIA_WEEKEND_FLATTEN
+    if flatten and (pos.horizon == "intraday" or is_india_market(pos.market)):
         return "End of day — flattening the same-day paper clip."
     if pos.side == "buy" and pos.stop and last <= pos.stop:
         return f"Stop hit at ₹{last:,.2f} (line was ₹{pos.stop:,.2f})."
     if pos.side == "sell" and pos.stop and last >= pos.stop:
         return f"Stop hit at ₹{last:,.2f} (line was ₹{pos.stop:,.2f})."
+    if cache is None:
+        return ""
     if pos.side == "buy" and pos.stop and pos.stop < pos.avg_price:
         target = pos.avg_price + 2.0 * (pos.avg_price - pos.stop)
         if last >= target:

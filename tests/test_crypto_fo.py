@@ -13,6 +13,10 @@ def test_market_for_instruments():
     assert market_for("future", "NIFTY.F") == "india_futures"
     assert market_for("option", "NIFTY.C") == "options_buy"
     assert market_for("equity", "RELIANCE") == "equity_cash"
+    assert market_for("commodity", "GOLD.X") == "global_commodities"
+    assert market_for("commodity", "GOLD") == "equity_cash"
+    assert market_for("fx", "EURUSD") == "forex_micro"
+    assert market_for("fx", "USDINR") == "forex_micro"
 
 
 def test_binance_pair_helpers():

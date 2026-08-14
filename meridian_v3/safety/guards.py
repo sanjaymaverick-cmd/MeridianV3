@@ -1,17 +1,23 @@
-"""Safety Systems — drawdown pause, daily live caps, overnight filters.
+"""Safety Systems — drawdown pause, daily live caps, per-market sessions.
 
 Open positions are never force-flattened by the pause rule. Only new
 live risk is blocked.
+
+Session flatten uses each market's own clock:
+  * India cash / F&O — 09:15–15:30 IST weekdays
+  * Crypto — never (24/7)
+  * FX — Sunday 17:00 ET → Friday 17:00 ET
+  * Global commodities — CME/ICE Sunday 18:00 ET → Friday 17:00 ET
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, time
-from zoneinfo import ZoneInfo
+from datetime import datetime
 
 from meridian_v3.config import Settings
 from meridian_v3.engine.drawdown import DrawdownState
+from meridian_v3.router.calendar import india_session, market_session
 
 
 @dataclass(frozen=True)
@@ -21,22 +27,10 @@ class SafetyVerdict:
     reasons: tuple[str, ...]
 
 
-def _parse_hhmm(value: str) -> time:
-    hour, minute = value.split(":")
-    return time(int(hour), int(minute))
-
-
 def session_state(now: datetime, settings: Settings) -> tuple[bool, int]:
-    """Return (in_session, minutes_to_close)."""
-    tz = ZoneInfo(settings.safety.timezone)
-    local = now.astimezone(tz) if now.tzinfo else now.replace(tzinfo=tz)
-    open_t = _parse_hhmm(settings.safety.session_open)
-    close_t = _parse_hhmm(settings.safety.session_close)
-    current = local.time()
-    in_session = open_t <= current <= close_t and local.weekday() < 5
-    close_dt = local.replace(hour=close_t.hour, minute=close_t.minute, second=0, microsecond=0)
-    minutes = int((close_dt - local).total_seconds() // 60)
-    return in_session, minutes
+    """India cash session. Kept for callers that mean 'is NSE open?'."""
+    clock = india_session(now, settings)
+    return clock.in_session, clock.minutes_to_close
 
 
 def evaluate_safety(
@@ -74,20 +68,50 @@ def evaluate_safety(
             f"The daily live line is {cap}. Paper can still learn."
         )
 
-    in_session, minutes = session_state(now, settings)
+    clock = market_session(now, settings, market)
     crypto = market.startswith("crypto")
-    overnight_blocked = (not crypto) and (
-        (market in {"options_buy", "crypto_options"} and settings.safety.overnight_options_forbidden)
-        or (market == "forex_micro" and settings.safety.overnight_fx_forbidden)
-        or (horizon == "intraday")
-        or market == "india_futures"
+    near_own_close = (
+        clock.in_session
+        and clock.minutes_to_close <= settings.safety.flatten_before_close_minutes
+        and not clock.always_on
     )
-    if (not in_session or minutes <= settings.safety.flatten_before_close_minutes) and overnight_blocked:
-        if horizon != "positional":
-            allow_live = False
+    own_session_closed = (not clock.in_session) and (not clock.always_on)
+
+    session_blocks_new = False
+    if crypto and settings.safety.crypto_always_on:
+        session_blocks_new = False
+    elif market in {"options_buy"} and settings.safety.overnight_options_forbidden:
+        session_blocks_new = own_session_closed or near_own_close
+    elif market == "forex_micro" and settings.safety.overnight_fx_forbidden:
+        # Own FX weekend / Friday 17:00 ET — not the NSE 15:30 IST close.
+        session_blocks_new = own_session_closed or near_own_close
+    elif market == "global_commodities":
+        session_blocks_new = (own_session_closed or near_own_close) and not settings.safety.overnight_commodities_ok
+        if settings.safety.overnight_commodities_ok:
+            session_blocks_new = own_session_closed or (near_own_close and horizon == "intraday")
+    elif market == "india_futures" or horizon == "intraday":
+        session_blocks_new = own_session_closed or near_own_close
+
+    if session_blocks_new and horizon != "positional":
+        allow_live = False
+        if crypto:
+            reasons.append("Crypto session block (unexpected). Paper can still learn.")
+        elif market == "forex_micro":
             reasons.append(
-                "Too close to the close, or the Indian market is shut. "
-                "Intraday India clips do not stay overnight. Crypto can keep going."
+                "FX is shut or too close to the Friday 17:00 ET close. "
+                "Crypto can keep going. Paper can still learn."
+            )
+        elif market == "global_commodities":
+            reasons.append(
+                "Global commodities are shut or near the Globex halt. "
+                "Crypto can keep going. Paper can still learn."
+            )
+        else:
+            reasons.append(
+                "Too close to the NSE close, or the Indian market is shut "
+                "(Friday 15:30 IST → Monday 09:15 IST). "
+                "Intraday India clips do not stay overnight. "
+                "Crypto stays 24/7. FX and global commodities follow their own clocks."
             )
 
     if market in {"options_buy", "crypto_options"}:

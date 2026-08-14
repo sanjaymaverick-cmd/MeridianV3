@@ -25,7 +25,10 @@ qty         = min(qty, cash_after_reserve / price, max_position)
 |---|---|
 | Equity cash | Whole shares. One share is allowed even when ATR wants zero, if cash fits. |
 | Options | **Buying only.** One lot. Premium ≤ 12% of equity. Selling premium is forbidden. |
-| Forex | Nano/micro only. Standard lots forbidden. |
+| India futures | Paper mini-lot. Full NSE lots are too big for this book. |
+| Global commodities | Paper mini-lot, 10% margin, marked in rupees. COMEX / NYMEX / ICE. |
+| Crypto | Fractional coins. Futures capped at 2×. Options buying only. 24/7. |
+| Forex | Nano/micro only. Standard lots forbidden. Open Sunday–Friday. |
 
 ## Concurrency
 

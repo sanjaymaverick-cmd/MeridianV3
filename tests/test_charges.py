@@ -170,6 +170,7 @@ def _decision(symbol="INFY", qty=2, price=1400, horizon="swing"):
         paper=True,
         live=False,
         size=size,
+        price=price,
         safety=SafetyVerdict(True, False, ("paper only",)),
         review=review,
         reasons=["test"],

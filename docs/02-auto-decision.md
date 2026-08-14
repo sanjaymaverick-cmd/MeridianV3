@@ -14,7 +14,7 @@ The engine answers one question: **Buy, Sell, or Hold — and may this clip be p
 | p(success) | Meta-label logistic, updated from paper outcomes |
 | Belief | Beta(α, β) per rule, updated from paper wins/losses |
 | Edge vs costs | Expected rupees minus brokerage/STT/slippage/spread + pad |
-| Route | Equity cash home, options/FX only if clearly stronger |
+| Route | Equity cash home while NSE is open; crypto 24/7, FX 24/5, global commodities when those tapes are stronger or India is shut |
 | Size | Confidence-weighted fractional Kelly × ATR |
 | Safety | Drawdown, arm switch, daily live cap, session |
 

@@ -32,6 +32,11 @@ def main(argv: list[str] | None = None) -> int:
     arm = sub.add_parser("arm", help="Arm or disarm live execution")
     arm.add_argument("--on", action="store_true")
     arm.add_argument("--off", action="store_true")
+    flat = sub.add_parser(
+        "flatten-india",
+        help="Close open India paper clips and return cash for crypto / FX / commodities",
+    )
+    flat.add_argument("--force", action="store_true", help="Close even if NSE is open")
     sub.add_parser("desktop", help="Open MERIDIAN V3 in a native window")
     args = parser.parse_args(argv)
 
@@ -47,6 +52,8 @@ def main(argv: list[str] | None = None) -> int:
         return _import(args.file, args.account, args.commit)
     if args.cmd == "arm":
         return _arm(on=args.on and not args.off)
+    if args.cmd == "flatten-india":
+        return _flatten_india(force=args.force)
     if args.cmd == "desktop":
         return _desktop()
     return _serve()
@@ -129,6 +136,30 @@ def _import(path: str, account: str, commit: bool) -> int:
             print(f"committed {accepted} rejected {rejected}")
         else:
             print("preview only — pass --commit after you have checked every line")
+        return 0
+    finally:
+        session.close()
+
+
+def _flatten_india(*, force: bool) -> int:
+    from meridian_v3.autopilot import flatten_india_paper
+    from meridian_v3.pipeline import mark_to_market
+    from meridian_v3.storage.db import desk_lock
+
+    session = get_session()
+    try:
+        with desk_lock:
+            out = flatten_india_paper(session, force=force)
+            mark_to_market(session, "paper")
+            session.commit()
+        if out.get("note") and not out.get("closed"):
+            print(out["note"])
+            return 0
+        names = ", ".join(out.get("symbols") or []) or "(none)"
+        print(
+            f"closed {out.get('india_closed', 0)} India paper clip(s): {names}. "
+            f"Cash back ₹{out.get('india_freed', 0):,.2f}. Paper cash now ₹{out.get('cash', 0):,.2f}."
+        )
         return 0
     finally:
         session.close()

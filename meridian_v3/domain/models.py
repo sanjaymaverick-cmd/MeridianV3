@@ -19,6 +19,7 @@ class Market(str, Enum):
     CRYPTO_FUTURES = "crypto_futures"
     CRYPTO_OPTIONS = "crypto_options"
     FOREX_MICRO = "forex_micro"
+    GLOBAL_COMMODITIES = "global_commodities"
 
 
 class Venue(str, Enum):

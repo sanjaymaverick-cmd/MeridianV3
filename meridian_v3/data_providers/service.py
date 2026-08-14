@@ -13,12 +13,19 @@ from meridian_v3.domain.symbols import normalize_symbol, yahoo_candidates
 from meridian_v3.engine.atr import average_true_range
 from meridian_v3.data_providers.binance import fetch_klines, is_binance_symbol
 from meridian_v3.storage.schema import PriceBar, PriceCache, WatchItem
+from meridian_v3.universe.global_markets import (
+    fx_quote_kind,
+    is_fx_symbol,
+    is_global_commodity,
+    yahoo_tickers_for,
+)
 
 
 
 def _tickers_for(symbol: str) -> list[str]:
-    if symbol == "USDINR":
-        return ["USDINR=X", "INR=X"]
+    mapped = yahoo_tickers_for(symbol)
+    if mapped:
+        return mapped
     if symbol == "NIFTY":
         return ["^NSEI"]
     if symbol == "BANKNIFTY":
@@ -108,15 +115,30 @@ class PriceProvider:
 
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         logging.getLogger("yfinance").setLevel(logging.CRITICAL)
-        specials = {"USDINR", "NIFTY", "BANKNIFTY", "SENSEX", "GOLD"}
+        index_specials = {"NIFTY", "BANKNIFTY", "SENSEX", "GOLD"}
         crypto = [item for item in names if is_binance_symbol(item.symbol)]
-        deriv = [item for item in names if "." in item.symbol and not is_binance_symbol(item.symbol)]
+        global_names = [
+            item
+            for item in names
+            if is_fx_symbol(item.symbol) or is_global_commodity(item.symbol)
+        ]
+        deriv = [
+            item
+            for item in names
+            if "." in item.symbol
+            and not is_binance_symbol(item.symbol)
+            and not is_global_commodity(item.symbol)
+        ]
         batch = [
             item
             for item in names
-            if item.symbol not in specials and item not in crypto and item not in deriv
+            if item.symbol not in index_specials
+            and item not in crypto
+            and item not in deriv
+            and item not in global_names
         ]
-        leftovers = [item for item in names if item.symbol in specials]
+        leftovers = [item for item in names if item.symbol in index_specials] + list(global_names)
+        leftovers.sort(key=lambda item: 0 if item.symbol == "USDINR" else 1)
         marked = 0
         got: set[str] = set()
 
@@ -157,6 +179,7 @@ class PriceProvider:
                     hist = None
                 if hist is not None and not hist.empty:
                     break
+            hist = _to_inr(self.session, item.symbol, hist)
             if _apply_frame(self.session, item.symbol, hist, now):
                 marked += 1
                 got.add(item.symbol)
@@ -176,7 +199,7 @@ class PriceProvider:
         return {"marked": marked, "failed": len(failed), "failed_symbols": failed, "applied": marked}
 
     def refresh_alt_markets(self) -> dict:
-        """Binance + India F&O clones. Fast. No full Yahoo scan."""
+        """Binance + India F&O clones + FX/commodity Yahoo. No full NSE scan."""
         from datetime import datetime, timezone
 
         now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -185,8 +208,79 @@ class PriceProvider:
         got: set[str] = set()
         marked = _refresh_binance(self.session, crypto, now, got)
         marked += _clone_derived(self.session, names, now, got)
+        try:
+            import yfinance as yf
+        except ImportError:
+            yf = None
+        if yf is not None:
+            globals_ = [
+                item
+                for item in names
+                if (is_fx_symbol(item.symbol) or is_global_commodity(item.symbol))
+                and item.symbol not in got
+            ]
+            globals_.sort(key=lambda item: 0 if item.symbol == "USDINR" else 1)
+            for item in globals_:
+                hist = None
+                for ticker in _tickers_for(item.symbol):
+                    try:
+                        hist = _history(yf, ticker)
+                    except Exception:
+                        hist = None
+                    if hist is not None and not hist.empty:
+                        break
+                hist = _to_inr(self.session, item.symbol, hist)
+                if _apply_frame(self.session, item.symbol, hist, now):
+                    marked += 1
+                    got.add(item.symbol)
         self.session.flush()
         return {"marked": marked, "got": tuple(got)}
+
+
+def _scale_ohlc(hist, factor: float):
+    if hist is None or getattr(hist, "empty", True) or factor == 1.0:
+        return hist
+    out = hist.copy()
+    for col in ("Open", "High", "Low", "Close"):
+        if col in out.columns:
+            out[col] = out[col] * factor
+    return out
+
+
+def _invert_ohlc_to_inr(hist, usdinr: float):
+    """USDXXX quotes (JPY per dollar) → rupees per foreign unit."""
+    if hist is None or getattr(hist, "empty", True):
+        return hist
+    out = hist.copy()
+    if "Open" in out.columns:
+        out["Open"] = usdinr / out["Open"]
+    if "Close" in out.columns:
+        out["Close"] = usdinr / out["Close"]
+    if "High" in out.columns and "Low" in out.columns:
+        new_high = usdinr / out["Low"]
+        new_low = usdinr / out["High"]
+        out["High"] = new_high
+        out["Low"] = new_low
+    return out
+
+
+def _to_inr(session: Session, symbol: str, hist):
+    """Mark global names in rupees so the book never mixes currencies."""
+    if hist is None or getattr(hist, "empty", True):
+        return hist
+    if is_global_commodity(symbol):
+        return _scale_ohlc(hist, _usdinr(session))
+    if not is_fx_symbol(symbol):
+        return hist
+    kind = fx_quote_kind(symbol)
+    if kind == "inr":
+        return hist
+    fx = _usdinr(session)
+    if kind == "usd_quote":
+        return _scale_ohlc(hist, fx)
+    if kind == "usd_base":
+        return _invert_ohlc_to_inr(hist, fx)
+    return hist
 
 
 def _usdinr(session: Session) -> float:

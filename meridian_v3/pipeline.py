@@ -18,6 +18,7 @@ from meridian_v3.engine.edge import estimate_equity_costs
 from meridian_v3.engine.meta_label import primary_direction, rsi
 from meridian_v3.execution.brokers.paper_broker import PaperBroker
 from meridian_v3.execution.oms import OrderManager
+from meridian_v3.router.calendar import india_session, is_india_market
 from meridian_v3.router.markets import market_for
 from meridian_v3.signals.engines import evaluate_signals
 from meridian_v3.storage.schema import (
@@ -72,7 +73,8 @@ def mark_to_market(session: Session, venue: str = "paper") -> float:
     for pos in open_pos:
         cache = session.scalar(select(PriceCache).where(PriceCache.symbol == pos.symbol))
         last = cache.last if cache and cache.last else pos.avg_price
-        value += pos.qty * last
+        signed = pos.qty if pos.side == "buy" else -pos.qty
+        value += signed * last
     acct.equity = acct.cash + value
     acct.peak = max(acct.peak, acct.equity)
     acct.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -82,6 +84,7 @@ def mark_to_market(session: Session, venue: str = "paper") -> float:
 def run_cycle(session: Session, *, live_armed: bool | None = None) -> dict:
     settings = get_settings()
     now = datetime.now(timezone.utc).replace(tzinfo=None)
+    india_open = india_session(now, settings).in_session
     paper_acct = _account(session, "paper")
     live_acct = _account(session, "live")
     armed = bool(live_acct.live_armed) if live_armed is None else live_armed
@@ -187,9 +190,10 @@ def run_cycle(session: Session, *, live_armed: bool | None = None) -> dict:
                 open_count=int(open_paper),
                 equity_score=70 if item.asset_class == "equity" else 40,
                 options_score=70 if item.asset_class in {"option", "index"} or item.symbol.endswith(".C") else 20,
-                forex_score=50 if item.asset_class == "fx" else 15,
+                forex_score=72 if item.asset_class == "fx" else 15,
                 crypto_score=75 if "crypto" in item.asset_class or item.symbol.endswith("USDT") or ".USDT" in item.symbol else 15,
                 futures_score=72 if item.asset_class in {"future", "crypto_futures"} or item.symbol.endswith(".F") else 15,
+                commodity_score=74 if item.symbol.endswith(".X") else 15,
                 preferred_market=market_for(item.asset_class, item.symbol),
                 now=now,
                 belief=_belief(session, "core"),
@@ -198,6 +202,12 @@ def run_cycle(session: Session, *, live_armed: bool | None = None) -> dict:
             settings,
         )
         decided += 1
+        if decision.paper and is_india_market(decision.market) and not india_open:
+            decision.paper = False
+            decision.reasons.append(
+                "Indian market is shut until Monday 09:15 IST. "
+                "No new India paper — cash stays free for crypto, FX, and commodities."
+            )
         session.add(
             SignalRow(
                 symbol=item.symbol,

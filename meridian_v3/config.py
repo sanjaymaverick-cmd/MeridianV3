@@ -63,6 +63,7 @@ class MarketsCfg(BaseModel):
             "equity_cash",
             "options_buy",
             "india_futures",
+            "global_commodities",
             "crypto_spot",
             "crypto_futures",
             "crypto_options",
@@ -75,6 +76,9 @@ class MarketsCfg(BaseModel):
     )
     india_futures: MarketSpec = Field(
         default_factory=lambda: MarketSpec(min_lot=0.05, lot_step=0.05, margin_pct=0.10, contract_size=65)
+    )
+    global_commodities: MarketSpec = Field(
+        default_factory=lambda: MarketSpec(min_lot=0.01, lot_step=0.01, margin_pct=0.10, min_notional=200)
     )
     crypto_spot: MarketSpec = Field(
         default_factory=lambda: MarketSpec(lot_step=0.0001, min_lot=0.0001, min_notional=200)
@@ -121,6 +125,8 @@ class SafetyCfg(BaseModel):
     overnight_equity_ok: bool = True
     overnight_options_forbidden: bool = True
     overnight_fx_forbidden: bool = True
+    overnight_commodities_ok: bool = True
+    crypto_always_on: bool = True
     flatten_before_close_minutes: int = 20
     session_open: str = "09:15"
     session_close: str = "15:30"
@@ -191,12 +197,25 @@ class ModulesCfg(BaseModel):
     alerts: bool = True
     mcx: bool = True
     fx: bool = True
+    commodities: bool = True
 
     model_config = {"populate_by_name": True}
 
 
 class FxCfg(BaseModel):
-    pairs: list[str] = Field(default_factory=lambda: ["USDINR", "EURUSD", "USDJPY"])
+    pairs: list[str] = Field(
+        default_factory=lambda: [
+            "USDINR",
+            "EURUSD",
+            "GBPUSD",
+            "USDJPY",
+            "USDCHF",
+            "AUDUSD",
+            "USDCAD",
+            "EURINR",
+            "GBPINR",
+        ]
+    )
     move_review_pct: float = 1.0
 
 

@@ -19,6 +19,9 @@ def test_seed_installs_universe_and_fifty_thousand(session):
     assert "RELIANCE" in symbols
     assert "ICICIBANK" in symbols
     assert "DIVISLAB" in symbols
+    assert "GOLD.X" in symbols
+    assert "EURUSD" in symbols
+    assert "BTCUSDT" in symbols
     assert len(symbols) >= 50
     paper = session.query(AccountState).filter_by(venue="paper").one()
     assert paper.cash == 50_000

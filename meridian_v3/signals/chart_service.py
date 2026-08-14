@@ -11,6 +11,17 @@ from meridian_v3.signals.chart_payload import (
     build_chart_payload,
 )
 from meridian_v3.storage.schema import PriceBar, PriceCache, SignalRow
+from meridian_v3.universe.global_markets import is_fx_symbol, is_global_commodity
+
+
+def _chart_label(symbol: str) -> str:
+    if symbol.endswith("USDT") or ".USDT" in symbol:
+        return f"{symbol} · CRYPTO"
+    if is_global_commodity(symbol):
+        return f"{symbol} · CMDTY"
+    if is_fx_symbol(symbol):
+        return f"{symbol} · FX"
+    return f"{symbol} · CASH"
 
 
 def chart_for(session: Session, symbol: str) -> dict:
@@ -59,7 +70,7 @@ def chart_for(session: Session, symbol: str) -> dict:
         )
     payload = build_chart_payload(
         symbol=symbol,
-        label=f"{symbol} · CASH" if symbol != "USDINR" else f"{symbol} · FX",
+        label=_chart_label(symbol),
         quality=cache.quality if cache else "missing",
         bars=bars,
         markers=markers,

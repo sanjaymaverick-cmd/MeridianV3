@@ -19,7 +19,8 @@ class PaperBroker(BrokerAdapter):
     def place(self, order: OrderRequest) -> OrderResult:
         px = float(order.price or 0.0)
         notional = abs(order.qty) * px
-        if order.side == "buy" and notional > self.cash + 1e-9:
+        flatten = bool(order.extra.get("flatten"))
+        if order.side == "buy" and not flatten and notional > self.cash + 1e-9:
             return OrderResult(
                 False, "", "rejected", 0.0, 0.0,
                 "Paper book does not have enough cash.",
