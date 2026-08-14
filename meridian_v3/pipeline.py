@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from meridian_v3.config import get_settings
 from meridian_v3.decision.engine import DecisionInput, decide
 from meridian_v3.engine.atr import average_true_range
-from meridian_v3.engine.bayesian import BetaBelief
+from meridian_v3.engine.bayesian import BetaBelief, update_belief
 from meridian_v3.engine.confluence import FactorVote
 from meridian_v3.engine.drawdown import assess_drawdown
 from meridian_v3.engine.edge import estimate_equity_costs
@@ -47,6 +47,36 @@ def _account(session: Session, venue: str) -> AccountState:
     return row
 
 
+def persist_belief(session: Session, won: bool, rule: str = "core") -> BetaBelief:
+    row = session.scalar(select(BeliefRow).where(BeliefRow.rule_name == rule))
+    if row is None:
+        row = BeliefRow(rule_name=rule, alpha=4.0, beta=4.0, wins=0, losses=0)
+        session.add(row)
+        session.flush()
+    belief = update_belief(BetaBelief(row.alpha, row.beta, row.wins, row.losses), won)
+    row.alpha = belief.alpha
+    row.beta = belief.beta
+    row.wins = belief.wins
+    row.losses = belief.losses
+    return belief
+
+
+def mark_to_market(session: Session, venue: str = "paper") -> float:
+    acct = _account(session, venue)
+    open_pos = list(
+        session.scalars(select(Position).where(Position.venue == venue, Position.status == "open"))
+    )
+    value = 0.0
+    for pos in open_pos:
+        cache = session.scalar(select(PriceCache).where(PriceCache.symbol == pos.symbol))
+        last = cache.last if cache and cache.last else pos.avg_price
+        value += pos.qty * last
+    acct.equity = acct.cash + value
+    acct.peak = max(acct.peak, acct.equity)
+    acct.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    return acct.equity
+
+
 def run_cycle(session: Session, *, live_armed: bool | None = None) -> dict:
     settings = get_settings()
     now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -69,11 +99,15 @@ def run_cycle(session: Session, *, live_armed: bool | None = None) -> dict:
     oms = OrderManager(session, broker)
     opened = 0
     decided = 0
+    holds = 0
+    paper_clips: list[str] = []
+    skipped_no_tape = 0
 
     names = list(session.scalars(select(WatchItem).where(WatchItem.status == "active")))
     for item in names:
         cache = session.scalar(select(PriceCache).where(PriceCache.symbol == item.symbol))
-        if cache is None or not cache.last:
+        if cache is None or not cache.last or cache.quality == "missing":
+            skipped_no_tape += 1
             continue
         bars = list(
             session.scalars(
@@ -120,9 +154,16 @@ def run_cycle(session: Session, *, live_armed: bool | None = None) -> dict:
             FactorVote("score", ((score or 5) - 5) / 5, 0.8, f"multi-factor {score}"),
             FactorVote("trend", 0.4 if cache.sma20 and cache.last > cache.sma20 else -0.3, 1.0, "tape vs average"),
         ]
-        win = atr * 2 * 1  # one-share style target, scaled later
-        loss = atr * settings.sizing.atr_stop_mult
+        win = (atr or cache.last * 0.015) * 2.0
+        loss = (atr or cache.last * 0.015) * settings.sizing.atr_stop_mult
         costs = estimate_equity_costs(notional=cache.last)
+        held = session.scalar(
+            select(Position).where(
+                Position.symbol == item.symbol,
+                Position.venue == "paper",
+                Position.status == "open",
+            )
+        )
         decision = decide(
             DecisionInput(
                 symbol=item.symbol,
@@ -146,6 +187,7 @@ def run_cycle(session: Session, *, live_armed: bool | None = None) -> dict:
                 forex_score=50 if item.asset_class == "fx" else 15,
                 now=now,
                 belief=_belief(session, "core"),
+                held_qty=held.qty if held else 0.0,
             ),
             settings,
         )
@@ -180,10 +222,21 @@ def run_cycle(session: Session, *, live_armed: bool | None = None) -> dict:
         if decision.paper:
             oms.execute(decision)
             opened += 1
+            open_paper += 1
+            paper_clips.append(f"{item.symbol} {decision.action} {decision.size.qty:g}")
             if decision.live:
                 live_today += 1
+        else:
+            holds += 1
 
     session.add(EquityPoint(venue="paper", as_of=now, equity=paper_acct.equity, cash=paper_acct.cash, peak=paper_acct.peak))
     session.add(EquityPoint(venue="live", as_of=now, equity=live_acct.equity, cash=live_acct.cash, peak=live_acct.peak))
     session.flush()
-    return {"decided": decided, "paper_opened": opened, "live_armed": armed}
+    return {
+        "decided": decided,
+        "paper_opened": opened,
+        "holds": holds,
+        "skipped_no_tape": skipped_no_tape,
+        "live_armed": armed,
+        "paper_clips": paper_clips,
+    }

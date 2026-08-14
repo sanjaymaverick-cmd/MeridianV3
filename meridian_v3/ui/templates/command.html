@@ -5,9 +5,40 @@
   <div>
     <p class="kicker">Dedicated account</p>
     <h1>Paper and live, side by side</h1>
-    <p class="lede">Every signal is paper-traded. Only the highest-confidence clips can go live, and only when you arm the switch.</p>
+    <p class="lede">Seed once. Paper auto then keeps choosing names and trading the demo ₹5,000 book by itself. Live stays off.</p>
+    <div class="inline">
+      <form method="post" action="/desk/seed">
+        <button class="btn primary" type="submit">Seed demo desk</button>
+      </form>
+      {% if auto_on %}
+      <form method="post" action="/desk/auto">
+        <input type="hidden" name="on" value="0">
+        <button class="btn" type="submit">Stop paper auto</button>
+      </form>
+      {% else %}
+      <form method="post" action="/desk/auto">
+        <input type="hidden" name="on" value="1">
+        <button class="btn" type="submit">Start paper auto</button>
+      </form>
+      {% endif %}
+      <form method="post" action="/desk/cycle">
+        <button class="btn" type="submit">Run one cycle now</button>
+      </form>
+    </div>
   </div>
 </section>
+
+<article class="panel">
+  <h2>Paper auto</h2>
+  <p class="figure">{{ 'ON' if auto_on else 'OFF' }}</p>
+  <p class="meta">
+    Worker {{ 'running' if auto_running else 'idle' }}
+    {% if auto_at %} · last pass {{ auto_at.strftime('%H:%M:%S') }}{% endif %}
+  </p>
+  {% if auto_note %}<p class="note">{{ auto_note }}</p>{% endif %}
+  {% if auto_error %}<p class="note">Worker note: {{ auto_error }}</p>{% endif %}
+  <p class="lede">About every minute it refreshes the tape, exits clips that hit a stop or the close, opens new paper trades the algo likes, and teaches the model from wins and losses. You do not need to keep clicking.</p>
+</article>
 
 <div class="grid-2">
   <article class="panel">

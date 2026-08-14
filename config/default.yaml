@@ -110,6 +110,8 @@ alerts:
   poll_seconds: 60
   min_days_between_prompts: 2
   snooze_hours: 24
+  auto_start: true
+  price_every_cycles: 5
 
 providers:
   yfinance_enabled: true

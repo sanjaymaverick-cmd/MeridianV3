@@ -57,7 +57,10 @@ def _seed(*, reset: bool) -> int:
     try:
         written = seed_demo(session, reset=reset)
         session.commit()
-        print(f"seeded {written} watch names" if written else "desk already has data")
+        if written:
+            print(f"seeded / refreshed {written} demo piece(s)")
+        else:
+            print("demo desk already complete — nothing new to add")
         return 0
     finally:
         session.close()
@@ -70,7 +73,17 @@ def _cycle() -> int:
     try:
         result = run_cycle(session)
         session.commit()
-        print(f"cycle decided {result['decided']} paper {result['paper_opened']} live_armed {result['live_armed']}")
+        print(
+            f"cycle decided {result['decided']}  "
+            f"paper fills {result['paper_opened']}  "
+            f"hold {result.get('holds', 0)}  "
+            f"no tape {result.get('skipped_no_tape', 0)}  "
+            f"live {'ARMED' if result['live_armed'] else 'disarmed'}"
+        )
+        for clip in result.get("paper_clips") or []:
+            print(f"  PAPER  {clip}")
+        if result["paper_opened"] == 0:
+            print("  No paper clip cleared the bar this pass. Open Decisions on the desk to read why.")
         return 0
     finally:
         session.close()
@@ -84,6 +97,10 @@ def _prices(*, force: bool) -> int:
         result = PriceProvider(session).refresh(force=force)
         session.commit()
         print(f"prices marked {result.get('marked', 0)} failed {result.get('failed', 0)}")
+        failed = result.get("failed_symbols") or []
+        if failed:
+            print("  Yahoo has no tape for: " + ", ".join(failed))
+            print("  Those names stay on the watch list but the cycle skips them.")
         return 0 if not result.get("failed") else 1
     finally:
         session.close()

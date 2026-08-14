@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from meridian_v3.config import get_settings
@@ -15,7 +15,11 @@ def get_engine():
     if _engine is None:
         settings = get_settings()
         settings.ensure_dirs()
-        _engine = create_engine(f"sqlite:///{settings.db_path}", future=True)
+        _engine = create_engine(
+            f"sqlite:///{settings.db_path}",
+            future=True,
+            connect_args={"check_same_thread": False},
+        )
         _Session = sessionmaker(bind=_engine, future=True, expire_on_commit=False)
     return _engine
 
@@ -23,6 +27,22 @@ def get_engine():
 def init_db() -> None:
     engine = get_engine()
     Base.metadata.create_all(engine)
+    _migrate(engine)
+
+
+def _migrate(engine) -> None:
+    """Add columns that create_all will not attach to an older SQLite file."""
+    wanted = {
+        "paper_auto": "INTEGER DEFAULT 1",
+        "last_cycle_at": "DATETIME",
+        "last_cycle_note": "TEXT DEFAULT ''",
+    }
+    with engine.begin() as conn:
+        rows = conn.execute(text("PRAGMA table_info(account_state)")).fetchall()
+        have = {row[1] for row in rows}
+        for name, ddl in wanted.items():
+            if name not in have:
+                conn.execute(text(f"ALTER TABLE account_state ADD COLUMN {name} {ddl}"))
 
 
 def get_session() -> Session:
