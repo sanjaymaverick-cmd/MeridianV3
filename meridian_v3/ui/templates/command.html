@@ -5,7 +5,7 @@
   <div>
     <p class="kicker">Dedicated account</p>
     <h1>Paper and live, side by side</h1>
-    <p class="lede">Seed once. Paper auto then keeps choosing names and trading the demo ₹5,000 book by itself. Live stays off.</p>
+    <p class="lede">Seed once. The algo scans NSE and BSE, picks the strongest names, and paper-trades the ₹50,000 demo book by itself. Live stays off.</p>
     <div class="inline">
       <form method="post" action="/desk/seed">
         <button class="btn primary" type="submit">Seed demo desk</button>
@@ -37,7 +37,7 @@
   </p>
   {% if auto_note %}<p class="note">{{ auto_note }}</p>{% endif %}
   {% if auto_error %}<p class="note">Worker note: {{ auto_error }}</p>{% endif %}
-  <p class="lede">About every minute it refreshes the tape, exits clips that hit a stop or the close, opens new paper trades the algo likes, and teaches the model from wins and losses. You do not need to keep clicking.</p>
+  <p class="lede">About every minute it scans the NSE/BSE universe, ranks the strongest setups, opens several paper clips the ₹50,000 book can hold, exits losers and winners, and trains from the results. You do not pick the stocks.</p>
 </article>
 
 <div class="grid-2">

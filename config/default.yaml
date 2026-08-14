@@ -13,7 +13,7 @@ paths:
   import_dir: ~/MeridianV3/imports
 
 account:
-  starting_equity_inr: 5000
+  starting_equity_inr: 50000
   currency: INR
   compound_profits: true
   name: Meridian Dedicated
@@ -55,9 +55,9 @@ sizing:
   high_confidence: 0.78
   live_confidence: 0.82
   positional_confidence: 0.88
-  max_concurrent_normal: 2
-  max_concurrent_high: 4
-  max_position_pct: 0.35
+  max_concurrent_normal: 8
+  max_concurrent_high: 12
+  max_position_pct: 0.18
   cash_reserve_pct: 0.10
 
 safety:
@@ -104,7 +104,7 @@ greeks:
   lot_step: 1.0
 
 watchlist:
-  active_cap: 50
+  active_cap: 200
 
 alerts:
   poll_seconds: 60

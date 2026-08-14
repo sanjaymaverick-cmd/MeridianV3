@@ -1,6 +1,6 @@
 # MERIDIAN V3
 
-Personal-use proprietary auto-trading desk for a dedicated Indian account that starts at **₹5,000**.
+Personal-use proprietary auto-trading desk for a dedicated Indian account that starts at **₹50,000**.
 
 V3 is the complete, unified system. It keeps every V1 advisory habit and every V2 Greeks / risk / review habit, then adds an auto-decision layer, hybrid paper + live execution, a broker-agnostic order manager, and portfolio import from PDF, Excel, and photos.
 
@@ -51,7 +51,7 @@ Native window: `pip install -e ".[desktop]"` then `python -m meridian_v3 desktop
 
 ## Capital rules (binding)
 
-- Starting equity **₹5,000**. All profits compound.
+- Starting equity **₹50,000**. All profits compound. The algo scans NSE and BSE and picks names — you do not have to type them.
 - Equity cash is home. Capital may visit F&O (options **buying** only) or forex (nano/micro only) when that tape is clearly stronger.
 - Risk per trade is confidence-weighted. High confidence can take more. Normal signals take less.
 - Pause **new live** trades at 20% drawdown from peak. Open positions may stay. Paper never pauses.

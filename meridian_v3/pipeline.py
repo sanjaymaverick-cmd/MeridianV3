@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from meridian_v3.capital.sizer import size_position
 from meridian_v3.config import get_settings
 from meridian_v3.decision.engine import DecisionInput, decide
 from meridian_v3.engine.atr import average_true_range
@@ -102,6 +103,7 @@ def run_cycle(session: Session, *, live_armed: bool | None = None) -> dict:
     holds = 0
     paper_clips: list[str] = []
     skipped_no_tape = 0
+    ranked: list[tuple[float, object, object]] = []
 
     names = list(session.scalars(select(WatchItem).where(WatchItem.status == "active")))
     for item in names:
@@ -220,14 +222,40 @@ def run_cycle(session: Session, *, live_armed: bool | None = None) -> dict:
             )
         )
         if decision.paper:
-            oms.execute(decision)
-            opened += 1
-            open_paper += 1
-            paper_clips.append(f"{item.symbol} {decision.action} {decision.size.qty:g}")
-            if decision.live:
-                live_today += 1
+            rank = decision.confidence * (decision.confluence / 100.0) + decision.p_success * 0.15
+            ranked.append((rank, item, decision))
         else:
             holds += 1
+
+    ranked.sort(key=lambda row: row[0], reverse=True)
+    for _rank, item, decision in ranked:
+        cache = session.scalar(select(PriceCache).where(PriceCache.symbol == item.symbol))
+        last = cache.last if cache and cache.last else 0.0
+        atr = (cache.atr if cache and cache.atr else last * 0.015)
+        fresh = size_position(
+            equity=paper_acct.equity,
+            cash=broker.funds(),
+            price=last,
+            atr=atr,
+            p_success=decision.p_success,
+            payoff=1.3,
+            confidence=decision.confidence,
+            drawdown=live_dd if armed else paper_dd,
+            settings=settings,
+            market=decision.market,
+            open_count=int(open_paper),
+        )
+        if fresh.blocked or fresh.qty <= 0:
+            holds += 1
+            continue
+        decision.size = fresh
+        oms.execute(decision)
+        opened += 1
+        open_paper += 1
+        paper_acct.cash = broker.funds()
+        paper_clips.append(f"{item.symbol} {decision.action} {fresh.qty:g}")
+        if decision.live:
+            live_today += 1
 
     session.add(EquityPoint(venue="paper", as_of=now, equity=paper_acct.equity, cash=paper_acct.cash, peak=paper_acct.peak))
     session.add(EquityPoint(venue="live", as_of=now, equity=live_acct.equity, cash=live_acct.cash, peak=live_acct.peak))

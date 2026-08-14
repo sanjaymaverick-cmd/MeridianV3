@@ -4,7 +4,7 @@ Combines:
   1. confidence-weighted fractional Kelly
   2. ATR volatility normalization
   3. drawdown scale
-  4. ₹5,000 cash / lot / market constraints
+  4. ₹50,000 cash / lot / market constraints
   5. compounding (the whole book is the bankroll)
 """
 
@@ -78,7 +78,7 @@ def size_position(
     if open_count >= max_open:
         return SizePlan(
             0, 0, 0, risk_pct, kelly.sized, 0, market, "intraday",
-            f"Already {open_count} open clips. Wait — the small book cannot wear more.",
+            f"Already {open_count} open clips. Wait — the book is full enough.",
             True,
         )
 
@@ -88,7 +88,7 @@ def size_position(
         if qty <= 0:
             return SizePlan(
                 0, 0, 0, risk_pct, kelly.sized, price, market, "intraday",
-                "Option premium does not fit the ₹5,000 book. Options buying only, and only a small premium.",
+                "Option premium does not fit the ₹50,000 book. Options buying only, and only a small premium.",
                 True,
             )
         return SizePlan(
@@ -129,7 +129,7 @@ def size_position(
                 1, price, min(risk_rupees, atr_plan.stop or price * 0.015),
                 risk_pct, kelly.sized, atr_plan.stop or price * 0.015,
                 market, "intraday",
-                "ATR wanted zero shares. We still allow one share so the ₹5,000 book can work.",
+                "ATR wanted zero shares. We still allow one share so the book can work.",
                 False,
             )
         return SizePlan(

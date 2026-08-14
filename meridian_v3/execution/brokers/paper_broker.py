@@ -11,7 +11,7 @@ from meridian_v3.execution.brokers.base import BrokerAdapter, OrderRequest, Orde
 class PaperBroker(BrokerAdapter):
     name = "paper"
 
-    def __init__(self, cash: float = 5000.0) -> None:
+    def __init__(self, cash: float = 50_000.0) -> None:
         self.cash = cash
         self._positions: dict[str, PositionSnap] = {}
         self._orders: dict[str, OrderResult] = {}

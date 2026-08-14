@@ -30,7 +30,7 @@ class PathsCfg(BaseModel):
 
 
 class AccountCfg(BaseModel):
-    starting_equity_inr: float = 5000.0
+    starting_equity_inr: float = 50_000.0
     currency: str = "INR"
     compound_profits: bool = True
     name: str = "Meridian Dedicated"
@@ -78,9 +78,9 @@ class SizingCfg(BaseModel):
     high_confidence: float = 0.78
     live_confidence: float = 0.82
     positional_confidence: float = 0.88
-    max_concurrent_normal: int = 2
-    max_concurrent_high: int = 4
-    max_position_pct: float = 0.35
+    max_concurrent_normal: int = 8
+    max_concurrent_high: int = 12
+    max_position_pct: float = 0.18
     cash_reserve_pct: float = 0.10
 
 
@@ -132,7 +132,7 @@ class GreeksCfg(BaseModel):
 
 
 class WatchlistCfg(BaseModel):
-    active_cap: int = 50
+    active_cap: int = 200
 
 
 class AlertsCfg(BaseModel):

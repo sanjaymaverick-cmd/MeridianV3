@@ -13,7 +13,7 @@
     <dt>Review (not an order)</dt>
     <dd>A written look. You accept, dismiss, snooze, or do nothing. It never buys or sells by itself.</dd>
     <dt>Paper fill</dt>
-    <dd>A pretend trade on the ₹5,000 paper book so we can see if the idea was good.</dd>
+    <dd>A pretend trade on the ₹50,000 paper book so we can see if the idea was good.</dd>
     <dt>Live fill</dt>
     <dd>A real ticket, only if you armed live and the signal is very strong. Needs a broker plugin.</dd>
     <dt>Daily PnL</dt>
@@ -37,6 +37,6 @@
 <article class="panel">
   <h2>One cycle vs paper auto</h2>
   <p class="note"><strong>Run one cycle now</strong> is a single pass. It does not keep going.</p>
-  <p class="note"><strong>Paper auto</strong> keeps going while the desk is open. It picks from the watch list (equity first, then a small options buy or gold / FX only when that tape is clearly stronger). It does not sell option premium and it does not place real futures at a broker. Same-day clips are flattened near 15:30 IST. After hours it still practices on the last close so you can train the model at night.</p>
+  <p class="note"><strong>Paper auto</strong> keeps going while the desk is open. It scans a liquid NSE and BSE universe the algo owns — you do not have to type names. Equity cash is home. A small options buy or gold / FX only when that tape is clearly stronger. It does not sell option premium. Same-day clips flatten near 15:30 IST. After hours it still practices on the last close.</p>
 </article>
 {% endblock %}

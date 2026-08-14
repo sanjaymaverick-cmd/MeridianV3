@@ -10,11 +10,13 @@ from meridian_v3.storage.schema import (
     AccountState,
     EquityPoint,
     OptionLegRow,
+    Position,
     PriceBar,
     PriceCache,
     RegimeState,
     WatchItem,
 )
+from meridian_v3.universe import install_universe
 
 
 DEMO_WATCH = (
@@ -71,10 +73,11 @@ def seed_demo(session: Session, *, reset: bool = False) -> int:
 
 
 def ensure_demo(session: Session) -> int:
-    """Add any missing demo names, marks, and the ₹5,000 paper/live books."""
+    """Add the algo NSE/BSE universe, seed tape, and the ₹50,000 paper/live books."""
     settings = get_settings()
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     written = 0
+    written += install_universe(session)
 
     for symbol, klass, notes in DEMO_WATCH:
         have = session.scalar(select(WatchItem).where(WatchItem.symbol == symbol))
@@ -135,6 +138,9 @@ def ensure_demo(session: Session) -> int:
         written += 1
 
     start = settings.account.starting_equity_inr
+    open_paper = session.scalar(
+        select(Position.id).where(Position.venue == "paper", Position.status == "open").limit(1)
+    )
     for venue in ("paper", "live"):
         acct = session.scalar(select(AccountState).where(AccountState.venue == venue))
         if acct is None:
@@ -146,10 +152,26 @@ def ensure_demo(session: Session) -> int:
                     equity=start,
                     peak=start,
                     live_armed=0,
+                    paper_auto=1,
                     updated_at=now,
                 )
             )
             session.add(EquityPoint(venue=venue, as_of=now, equity=start, cash=start, peak=start))
+            written += 1
+            continue
+        unused = abs(acct.equity - acct.cash) < 1.0
+        stale_small = acct.equity <= 5000.01 and unused
+        if venue == "paper" and open_paper is None and unused and acct.equity + 1 < start:
+            acct.cash = start
+            acct.equity = start
+            acct.peak = max(acct.peak, start)
+            acct.updated_at = now
+            written += 1
+        elif venue == "live" and unused and (stale_small or acct.equity + 1 < start) and not acct.live_armed:
+            acct.cash = start
+            acct.equity = start
+            acct.peak = max(acct.peak, start)
+            acct.updated_at = now
             written += 1
 
     leg = session.scalar(select(OptionLegRow).where(OptionLegRow.leg_id == "demo-nifty-ce"))
@@ -180,7 +202,7 @@ def ensure_demo(session: Session) -> int:
                 desk="Elevated",
                 tape="trending",
                 vol="low_vol",
-                reason="Seeded desk · mixed tape · starting ₹5,000 book",
+                reason="Seeded desk · NSE/BSE algo universe · starting ₹50,000 book",
                 as_of=now,
             )
         )

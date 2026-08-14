@@ -24,9 +24,9 @@ def _input(**kwargs):
         loss_rupees=30,
         costs=CostEstimate(1, 1, 1, 1),
         payoff=2.0,
-        equity=5000,
-        cash=5000,
-        drawdown=assess_drawdown(5000, 5000),
+        equity=50_000,
+        cash=50_000,
+        drawdown=assess_drawdown(50_000, 50_000),
         live_armed=False,
         live_today=0,
         open_count=0,
@@ -55,7 +55,7 @@ def test_paper_not_live_when_disarmed():
 
 def test_drawdown_blocks_live():
     d = decide(
-        _input(drawdown=assess_drawdown(3900, 5000), live_armed=True),
+        _input(drawdown=assess_drawdown(39_000, 50_000), live_armed=True),
         Settings(),
     )
     assert d.live is False
