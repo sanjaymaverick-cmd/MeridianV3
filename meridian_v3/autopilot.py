@@ -23,6 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from meridian_v3.config import get_settings
+from meridian_v3.capital.sizer import stop_price
 from meridian_v3.engine.meta_label import primary_direction, rsi
 from meridian_v3.execution.brokers.paper_broker import PaperBroker
 from meridian_v3.execution.oms import OrderManager
@@ -269,14 +270,15 @@ def _exit_reason(
         return INDIA_WEEKEND_FLATTEN
     if flatten and (pos.horizon == "intraday" or is_india_market(pos.market)):
         return "End of day — flattening the same-day paper clip."
-    if pos.side == "buy" and pos.stop and last <= pos.stop:
-        return f"Stop hit at ₹{last:,.2f} (line was ₹{pos.stop:,.2f})."
-    if pos.side == "sell" and pos.stop and last >= pos.stop:
-        return f"Stop hit at ₹{last:,.2f} (line was ₹{pos.stop:,.2f})."
+    line = stop_price(pos.side, pos.avg_price, pos.stop or 0.0)
+    if pos.side == "buy" and line and last <= line:
+        return f"Stop hit at ₹{last:,.2f} (line was ₹{line:,.2f})."
+    if pos.side == "sell" and line and last >= line:
+        return f"Stop hit at ₹{last:,.2f} (line was ₹{line:,.2f})."
     if cache is None:
         return ""
-    if pos.side == "buy" and pos.stop and pos.stop < pos.avg_price:
-        target = pos.avg_price + 2.0 * (pos.avg_price - pos.stop)
+    if pos.side == "buy" and line and line < pos.avg_price:
+        target = pos.avg_price + 2.0 * (pos.avg_price - line)
         if last >= target:
             return f"Target hit at ₹{last:,.2f}."
     elif pos.side == "buy" and last >= pos.avg_price * 1.03:

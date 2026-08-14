@@ -15,6 +15,7 @@ from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
+from meridian_v3.capital.sizer import stop_price
 from meridian_v3.charges.indian import levy
 from meridian_v3.config import get_settings
 from meridian_v3.decision.engine import AutoDecision
@@ -127,7 +128,7 @@ class OrderManager:
                     side=decision.action,
                     qty=qty,
                     avg_price=price,
-                    stop=decision.size.stop,
+                    stop=stop_price(decision.action, price, decision.size.stop),
                     horizon=decision.size.horizon,
                     status="open",
                     opened_at=datetime.now(timezone.utc).replace(tzinfo=None),

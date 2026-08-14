@@ -32,6 +32,24 @@ class SizePlan:
     blocked: bool
 
 
+def stop_price(side: str, entry: float, stop: float) -> float:
+    """Turn an ATR *distance* into a price line.
+
+    ``SizePlan.stop`` is rupees of room (ATR × k), not a level. A silver
+    short at ₹6,216 with ₹219 of room must stop at ₹6,435 — never treat
+    ₹219 as the stop price or every tick looks like a stop-out.
+    """
+    dist = float(stop or 0.0)
+    px = float(entry or 0.0)
+    if dist <= 0 or px <= 0:
+        return dist
+    if dist > px * 0.45:
+        return dist
+    if side == "sell":
+        return px + dist
+    return max(0.0, px - dist)
+
+
 def risk_cap_pct(confidence: float, settings: Settings) -> float:
     if confidence >= settings.sizing.high_confidence:
         return settings.sizing.max_risk_pct_high_conf

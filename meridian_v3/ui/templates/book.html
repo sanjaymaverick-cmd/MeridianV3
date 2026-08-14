@@ -5,7 +5,7 @@
   <div>
     <p class="kicker">Hybrid book</p>
     <h1>Paper learns. Live is rare.</h1>
-    <p class="lede">Avg buy is what you paid. Current is the last mark. Profit and loss is after brokerage, GST, STT and the other Indian contract-note lines. Change the fee sheet on Safety.</p>
+    <p class="lede">Tape P&amp;L is the price move only. Fees are the contract note. Net is tape minus fees. When both sides print the same mark, tape is ₹0 and net equals the bill — those are not the same column.</p>
   </div>
 </section>
 <article class="panel">
@@ -26,7 +26,7 @@
   <article class="panel">
     <h2>Paper — open</h2>
     <table>
-      <thead><tr><th>Name</th><th>Side</th><th>Qty</th><th>Avg buy</th><th>Current</th><th>Fees</th><th>Open P&amp;L</th></tr></thead>
+      <thead><tr><th>Name</th><th>Side</th><th>Qty</th><th>Avg buy</th><th>Current</th><th>Tape</th><th>Fees</th><th>Net</th></tr></thead>
       <tbody>
       {% for p in paper_pos %}
         <tr>
@@ -35,11 +35,12 @@
           <td class="num">{{ p.qty }}</td>
           <td class="num">{{ p.avg_buy | inr }}</td>
           <td class="num">{{ p.current | inr if p.current else '—' }}</td>
+          <td class="num {{ p.gross_class }}">{{ p.gross | inr if p.gross is not none else '—' }}</td>
           <td class="num">{{ p.fees | inr }}</td>
           <td class="num {{ p.pnl_class }}">{{ p.pnl | inr if p.pnl is not none else '—' }}</td>
         </tr>
       {% else %}
-        <tr><td colspan="7">No open paper clips.</td></tr>
+        <tr><td colspan="8">No open paper clips.</td></tr>
       {% endfor %}
       </tbody>
     </table>
@@ -47,7 +48,7 @@
   <article class="panel">
     <h2>Live — open</h2>
     <table>
-      <thead><tr><th>Name</th><th>Side</th><th>Qty</th><th>Avg buy</th><th>Current</th><th>Fees</th><th>Open P&amp;L</th></tr></thead>
+      <thead><tr><th>Name</th><th>Side</th><th>Qty</th><th>Avg buy</th><th>Current</th><th>Tape</th><th>Fees</th><th>Net</th></tr></thead>
       <tbody>
       {% for p in live_pos %}
         <tr>
@@ -56,11 +57,12 @@
           <td class="num">{{ p.qty }}</td>
           <td class="num">{{ p.avg_buy | inr }}</td>
           <td class="num">{{ p.current | inr if p.current else '—' }}</td>
+          <td class="num {{ p.gross_class }}">{{ p.gross | inr if p.gross is not none else '—' }}</td>
           <td class="num">{{ p.fees | inr }}</td>
           <td class="num {{ p.pnl_class }}">{{ p.pnl | inr if p.pnl is not none else '—' }}</td>
         </tr>
       {% else %}
-        <tr><td colspan="7">Empty. Live stays off until you arm it.</td></tr>
+        <tr><td colspan="8">Empty. Live stays off until you arm it.</td></tr>
       {% endfor %}
       </tbody>
     </table>
@@ -68,42 +70,57 @@
 </div>
 <article class="panel">
   <h2>Settled paper trades</h2>
+  {% if paper_settled and paper_settled.count %}
+  <p class="figure {{ 'up' if paper_settled.pnl > 0.5 else 'down' if paper_settled.pnl < -0.5 else '' }}">{{ paper_settled.pnl | inr }}</p>
+  <p class="meta">{{ paper_settled.count }} closed · tape {{ paper_settled.gross | inr }} · fees {{ paper_settled.fees | inr }} · net {{ paper_settled.pnl | inr }}. Net = tape move minus the bill.</p>
+  {% endif %}
   <table>
-    <thead><tr><th>Name</th><th>Side</th><th>Qty</th><th>Avg buy</th><th>Exit</th><th>Fees</th><th>Profit / loss</th></tr></thead>
+    <thead><tr><th>When</th><th>Name</th><th>Market</th><th>Side</th><th>Qty</th><th>Avg buy</th><th>Exit</th><th>Tape P&amp;L</th><th>Fees</th><th>Net</th><th>Why</th></tr></thead>
     <tbody>
     {% for p in paper_done %}
       <tr>
+        <td class="num">{% if p.closed_at %}{{ p.closed_at.strftime('%d %b %H:%M') }}{% else %}—{% endif %}</td>
         <td>{{ p.symbol }}</td>
+        <td>{{ p.market_label }}</td>
         <td>{{ p.side }}</td>
         <td class="num">{{ p.qty }}</td>
         <td class="num">{{ p.avg_buy | inr }}</td>
         <td class="num">{{ p.current | inr if p.current else '—' }}</td>
+        <td class="num {{ p.gross_class }}">{{ p.gross | inr if p.gross is not none else '—' }}</td>
         <td class="num">{{ p.fees | inr }}</td>
         <td class="num {{ p.pnl_class }}">{{ p.pnl | inr if p.pnl is not none else '—' }}</td>
+        <td class="wrap">{{ p.reason }}</td>
       </tr>
     {% else %}
-      <tr><td colspan="7">No settled paper trades yet.</td></tr>
+      <tr><td colspan="11">No settled paper trades yet.</td></tr>
     {% endfor %}
     </tbody>
   </table>
 </article>
 <article class="panel">
   <h2>Settled live trades</h2>
+  {% if live_settled and live_settled.count %}
+  <p class="meta">{{ live_settled.count }} closed · net {{ live_settled.pnl | inr }}</p>
+  {% endif %}
   <table>
-    <thead><tr><th>Name</th><th>Side</th><th>Qty</th><th>Avg buy</th><th>Exit</th><th>Fees</th><th>Profit / loss</th></tr></thead>
+    <thead><tr><th>When</th><th>Name</th><th>Market</th><th>Side</th><th>Qty</th><th>Avg buy</th><th>Exit</th><th>Tape P&amp;L</th><th>Fees</th><th>Net</th><th>Why</th></tr></thead>
     <tbody>
     {% for p in live_done %}
       <tr>
+        <td class="num">{% if p.closed_at %}{{ p.closed_at.strftime('%d %b %H:%M') }}{% else %}—{% endif %}</td>
         <td>{{ p.symbol }}</td>
+        <td>{{ p.market_label }}</td>
         <td>{{ p.side }}</td>
         <td class="num">{{ p.qty }}</td>
         <td class="num">{{ p.avg_buy | inr }}</td>
         <td class="num">{{ p.current | inr if p.current else '—' }}</td>
+        <td class="num {{ p.gross_class }}">{{ p.gross | inr if p.gross is not none else '—' }}</td>
         <td class="num">{{ p.fees | inr }}</td>
         <td class="num {{ p.pnl_class }}">{{ p.pnl | inr if p.pnl is not none else '—' }}</td>
+        <td class="wrap">{{ p.reason }}</td>
       </tr>
     {% else %}
-      <tr><td colspan="7">No settled live trades.</td></tr>
+      <tr><td colspan="11">No settled live trades.</td></tr>
     {% endfor %}
     </tbody>
   </table>
