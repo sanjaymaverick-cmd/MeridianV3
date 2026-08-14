@@ -23,7 +23,7 @@ from meridian_v3.domain.copy import live_note
 from meridian_v3.execution.brokers.base import OrderRequest
 from meridian_v3.execution.brokers.paper_broker import PaperBroker
 from meridian_v3.execution.brokers.plugin import PluginBroker
-from meridian_v3.storage.schema import AccountState, Fill, Order, Position
+from meridian_v3.storage.schema import AccountState, Fill, Order, Position, PriceCache
 
 
 class OrderManager:
@@ -41,19 +41,41 @@ class OrderManager:
         return out
 
     def _send(self, decision: AutoDecision, *, venue: str, broker) -> dict:
+        settings = get_settings()
         cid = f"{venue}-{uuid4().hex[:12]}"
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+        # 0.2 — never divide margin by lots. No honest mark ⇒ no fill (a Hold).
+        price = _fill_price(decision)
+        if price is None or price <= 0:
+            return self._reject(
+                cid, decision, venue, price=0.0, now=now,
+                message="No live mark for this symbol — refusing to fabricate a fill price. Holding.",
+            )
+
+        # 0.3 — second gate: a fill wildly off the tape is a unit-mismatch bug.
+        ok, last = _fill_within_bounds(self.session, decision.symbol, price, settings)
+        if not ok:
+            return self._reject(
+                cid, decision, venue, price=price, now=now,
+                message=(
+                    f"Fill price ₹{price:,.2f} is more than "
+                    f"{settings.execution.max_fill_deviation_pct:.0%} from the tape "
+                    f"₹{last:,.2f}. Refusing a suspicious mark."
+                ),
+            )
+
         req = OrderRequest(
             client_id=cid,
             symbol=decision.symbol,
             side=decision.action,
             qty=decision.size.qty,
-            price=_fill_price(decision),
+            price=price,
             market=decision.market,
             venue=venue,
             product="MIS" if decision.size.horizon == "intraday" else "CNC",
         )
         result = broker.place(req)
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
         order = Order(
             client_id=cid,
             broker_id=result.broker_id,
@@ -113,6 +135,36 @@ class OrderManager:
             "gst": bill.gst if result.ok else 0.0,
         }
 
+    def _reject(
+        self, cid: str, decision: AutoDecision, venue: str, *, price: float, now: datetime, message: str
+    ) -> dict:
+        """Record a refused ticket without any fill, position, or fee."""
+        order = Order(
+            client_id=cid,
+            broker_id="",
+            venue=venue,
+            market=decision.market,
+            symbol=decision.symbol,
+            side=decision.action,
+            qty=decision.size.qty,
+            limit_price=price,
+            status="rejected",
+            message=message,
+            created_at=now,
+        )
+        self.session.add(order)
+        self.session.flush()
+        return {
+            "ok": False,
+            "status": "rejected",
+            "message": message,
+            "broker_id": "",
+            "venue": venue,
+            "fees": 0.0,
+            "brokerage": 0.0,
+            "gst": 0.0,
+        }
+
     def _upsert_position(self, decision: AutoDecision, qty: float, price: float, venue: str) -> None:
         row = (
             self.session.query(Position)
@@ -120,6 +172,11 @@ class OrderManager:
             .one_or_none()
         )
         if row is None:
+            # 1.1 — remember the exact meta-label feature vector this clip was
+            # opened on, so when it closes the online logistic can be trained
+            # on the same features it was scored with (see autopilot.py).
+            meta = getattr(decision, "meta", None)
+            features = meta.features if meta else {}
             self.session.add(
                 Position(
                     venue=venue,
@@ -133,6 +190,7 @@ class OrderManager:
                     status="open",
                     opened_at=datetime.now(timezone.utc).replace(tzinfo=None),
                     source="auto",
+                    feature_json=json.dumps(features),
                 )
             )
             return
@@ -247,17 +305,34 @@ class OrderManager:
 
 
 def _fill_price(decision: AutoDecision) -> float | None:
-    """Use the market mark in rupees, never margin / qty.
+    """The market mark in rupees, or ``None`` when we have no honest price.
 
-    Leveraged size plans store cash (margin) in ``notional``. Dividing
-    that by lots used to record GOLD.X at ₹42,000 when the tape was
-    ₹4,20,000 — a one-place decimal slide and a fake P&L.
+    Leveraged size plans store cash (margin) in ``notional``. Dividing that
+    by lots used to record GOLD.X at ₹42,000 when the tape was ₹4,20,000 — a
+    one-place decimal slide and a fake P&L. So there is deliberately no
+    ``notional / qty`` fallback: no mark means no fill, and the OMS turns
+    that into a Hold instead of a mispriced ticket.
     """
     if decision.price and decision.price > 0:
         return float(decision.price)
-    if decision.size.qty:
-        return float(decision.size.notional / decision.size.qty)
     return None
+
+
+def _fill_within_bounds(
+    session: Session, symbol: str, price: float, settings
+) -> tuple[bool, float | None]:
+    """True when ``price`` sits within the configured band of the cached tape.
+
+    When there is no cached mark to compare against we allow the fill (the
+    ``_fill_price`` gate already refused a truly absent price); the band only
+    catches a mark that exists but is a 3x/10x unit-mismatch away from it.
+    """
+    cache = session.query(PriceCache).filter(PriceCache.symbol == symbol).one_or_none()
+    last = float(cache.last) if cache is not None and cache.last else None
+    if last is None or last <= 0:
+        return True, last
+    deviation = abs(price - last) / last
+    return deviation <= settings.execution.max_fill_deviation_pct, last
 
 
 def _entry_fees(session: Session, pos: Position) -> float:

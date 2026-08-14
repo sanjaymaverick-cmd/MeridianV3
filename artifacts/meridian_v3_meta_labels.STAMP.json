@@ -1,0 +1,12 @@
+{
+  "generated_at": "2026-08-14T15:38:49.654873+00:00",
+  "source_db": "D:/work Dir/MeridianV3/meridian_v3.db",
+  "source_db_sha256": "57b4eeca533eba7e48bd67b76ee2298bbf8be72e147b413f1f02440d34648595",
+  "source_db_bytes": 42704896,
+  "rows_all": 220,
+  "rows_clean": 169,
+  "win_rate_all": 0.2727272727272727,
+  "win_rate_clean": 0.05325443786982249,
+  "avg_honest_pnl_all": 31.202146204361533,
+  "avg_honest_pnl_clean": -7.915838100023602
+}

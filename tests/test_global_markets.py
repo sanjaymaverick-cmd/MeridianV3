@@ -39,12 +39,9 @@ def test_universes_cover_commodities_and_fx():
 def test_router_prefers_named_tape():
     assert market_for("commodity", "SILVER.X") == "global_commodities"
     assert market_for("fx", "GBPINR") == "forex_micro"
-    route = route_market(
-        equity_score=40,
-        options_score=10,
-        forex_score=20,
-        commodity_score=90,
-    )
+    # 1.3 — routing is suffix-based (market_for); route_market just carries
+    # whatever market_for resolved through as `preferred`.
+    route = route_market(preferred=market_for("commodity", "SILVER.X"))
     assert route.market == "global_commodities"
 
 

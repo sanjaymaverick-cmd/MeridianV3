@@ -133,6 +133,17 @@ class SafetyCfg(BaseModel):
     timezone: str = "Asia/Kolkata"
 
 
+class ExecutionCfg(BaseModel):
+    # Reject a fill whose price is more than this fraction away from the
+    # cached tape. A second gate behind the ``_fill_price`` fix so a 3x/10x
+    # unit-mismatch can never silently reach a Fill or Position.
+    max_fill_deviation_pct: float = 0.25
+    # A same-mark EOD/weekend flatten within this fraction of entry is a
+    # cost-only "scratch", not a directional outcome — it must not move the
+    # belief prior.
+    flat_scratch_pct: float = 0.001
+
+
 class DecisionCfg(BaseModel):
     paper_all_signals: bool = True
     live_requires_arm: bool = True
@@ -182,6 +193,11 @@ class ProvidersCfg(BaseModel):
     yfinance_enabled: bool = True
     price_ttl_minutes: int = 15
     request_sleep_ms: int = 400
+    # 0.6 — overlay an intraday mark on top of the 6mo daily context so a
+    # same-day paper clip can actually move between its open and its close.
+    intraday_marks: bool = True
+    intraday_interval: str = "5m"
+    intraday_period: str = "1d"
 
 
 class ModulesCfg(BaseModel):
@@ -233,6 +249,7 @@ class Settings(BaseSettings):
     markets: MarketsCfg = Field(default_factory=MarketsCfg)
     sizing: SizingCfg = Field(default_factory=SizingCfg)
     safety: SafetyCfg = Field(default_factory=SafetyCfg)
+    execution: ExecutionCfg = Field(default_factory=ExecutionCfg)
     decision: DecisionCfg = Field(default_factory=DecisionCfg)
     regime: RegimeCfg = Field(default_factory=RegimeCfg)
     greeks: GreeksCfg = Field(default_factory=GreeksCfg)

@@ -56,52 +56,19 @@ def market_for(asset_class: str, symbol: str = "") -> str:
     return CLASS_TO_MARKET.get(asset_class, "equity_cash")
 
 
-def route_market(
-    *,
-    equity_score: float,
-    options_score: float,
-    forex_score: float,
-    crypto_score: float = 0.0,
-    futures_score: float = 0.0,
-    commodity_score: float = 0.0,
-    options_allowed: bool = True,
-    forex_allowed: bool = True,
-    crypto_allowed: bool = True,
-    futures_allowed: bool = True,
-    commodity_allowed: bool = True,
-    home_bonus: float = 8.0,
-    shift_margin: float = 12.0,
-    preferred: str | None = None,
-) -> Route:
+def route_market(*, preferred: str | None = None) -> Route:
+    """Pick the market for a symbol.
+
+    Routing is pure suffix/asset-class dispatch (``market_for``, above) —
+    every live caller (``pipeline.run_cycle``) always resolves a
+    ``preferred_market`` before calling in, since ``market_for`` never
+    returns ``None``. This function used to also rank equity/options/
+    forex/crypto/futures/commodity scores against each other and only fall
+    through to that comparison when ``preferred`` was empty, but the live
+    cycle never left it empty, so that comparison never ran (F6) — it has
+    been removed rather than kept on as dead code. ``preferred=None`` is a
+    defensive default (equity cash) for a caller that genuinely has none.
+    """
     if preferred:
         return Route(preferred, 100.0, f"This name lives on {preferred.replace('_', ' ')}.")
-    equity = equity_score + home_bonus
-    options = options_score if options_allowed else -1e9
-    forex = forex_score if forex_allowed else -1e9
-    crypto = crypto_score if crypto_allowed else -1e9
-    futures = futures_score if futures_allowed else -1e9
-    commodity = commodity_score if commodity_allowed else -1e9
-    ranked = [
-        ("equity_cash", equity, "Equity cash is home. We stay here unless another tape is clearly stronger."),
-        ("options_buy", options, "Options buying only. Premium must fit the ₹50,000 book."),
-        ("india_futures", futures, "India futures use a paper mini-lot so the ₹50,000 book can hold them."),
-        (
-            "global_commodities",
-            commodity,
-            "Global commodities (COMEX / NYMEX / ICE). Paper mini-lot, marked in rupees.",
-        ),
-        ("crypto_spot", crypto, "Binance crypto spot. Sized in coin crumbs, marked in rupees. 24/7."),
-        ("forex_micro", forex, "Forex nano/micro only. A visit, not a new home. Open while India sleeps."),
-    ]
-    ranked.sort(key=lambda item: item[1], reverse=True)
-    best_name, best_score, best_why = ranked[0]
-    home_score = equity
-    if best_name != "equity_cash" and best_score < home_score + shift_margin:
-        return Route("equity_cash", home_score, "The visitor is not stronger enough. Capital stays in equity cash.")
-    if best_name == "equity_cash":
-        return Route(best_name, best_score, best_why)
-    return Route(
-        best_name,
-        best_score,
-        f"{best_why} Shift is allowed because this tape beats home by {best_score - home_score:.0f} points.",
-    )
+    return Route("equity_cash", 100.0, "No preferred market was given. Equity cash is home.")

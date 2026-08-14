@@ -9,7 +9,7 @@ Name: **INFY**. Dedicated book: ₹5,000 cash, no open clips. Live disarmed.
 5. **Meta-label.** Logistic says p(success) = 0.61. Take for paper.
 6. **Bayesian.** Rule “core” is Beta(4,4). Blend → confidence ≈ 0.58.
 7. **Edge.** Expected extra ≈ ₹28 after a 2:1 payoff on one share. Costs on ₹1,488 ≈ ₹4 + ₹8 pad. Edge clears.
-8. **Route.** Equity score 80 vs options 20 vs FX 15. Stay in **equity cash**.
+8. **Route.** INFY has no `.F`/`.C`/`.X`/`USDT` suffix and asset class `equity`, so `market_for` sends it straight to **equity cash** — no scoring contest between markets.
 9. **Size.** Fractional Kelly × confidence × ATR → 1 share, stop ≈ ₹33, risk ≈ ₹33 (0.7% of book).
 10. **Safety.** Live disarmed. Session open. Drawdown 0. Paper allowed. Live blocked.
 11. **OMS.** PaperBroker buys 1 INFY at 1,488. Cash 3,512. Review card written: “Auto decision review (not an order)”.

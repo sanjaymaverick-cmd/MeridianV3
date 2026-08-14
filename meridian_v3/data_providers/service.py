@@ -49,6 +49,41 @@ def _history(yf, ticker: str):
         return yf.Ticker(ticker).history(period="6mo", auto_adjust=False)
 
 
+def _intraday_frame(yf, ticker: str, settings):
+    """Latest intraday bars for a Yahoo ticker, best-effort across intervals.
+
+    The 6mo daily history still owns ATR / SMA / 20-day range context; this is
+    only used to overlay a *moving* last mark so a same-day paper clip can
+    change between its open and its close (0.6).
+    """
+    quiet = StringIO()
+    logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+    period = settings.providers.intraday_period
+    seen: list[str] = []
+    for interval in (settings.providers.intraday_interval, "1m", "15m"):
+        if interval in seen:
+            continue
+        seen.append(interval)
+        try:
+            with redirect_stdout(quiet), redirect_stderr(quiet):
+                hist = yf.Ticker(ticker).history(period=period, interval=interval, auto_adjust=False)
+        except Exception:
+            hist = None
+        if hist is not None and not getattr(hist, "empty", True):
+            return hist
+    return None
+
+
+def _intraday_last_inr(session: Session, symbol: str, yf, settings) -> float | None:
+    """The most recent intraday close for ``symbol``, converted to rupees."""
+    hist = _intraday_frame(yf, _primary_yahoo(symbol), settings)
+    hist = _to_inr(session, symbol, hist)
+    if hist is None or getattr(hist, "empty", True) or "Close" not in hist.columns:
+        return None
+    closes = [float(x) for x in hist["Close"].tolist() if x == x]
+    return closes[-1] if closes else None
+
+
 def _apply_frame(session: Session, symbol: str, hist, now: datetime) -> bool:
     if hist is None or getattr(hist, "empty", True):
         return False
@@ -184,6 +219,10 @@ class PriceProvider:
                 marked += 1
                 got.add(item.symbol)
 
+        # Overlay a moving intraday mark on the Yahoo names before derived
+        # clones copy their parent, so futures/options inherit the fresh last.
+        self._overlay_intraday(yf, list(batch) + list(leftovers), now, got)
+
         marked += _refresh_binance(self.session, crypto, now, got)
         marked += _clone_derived(self.session, names, now, got)
 
@@ -197,6 +236,33 @@ class PriceProvider:
             cache.as_of = now
         self.session.flush()
         return {"marked": marked, "failed": len(failed), "failed_symbols": failed, "applied": marked}
+
+    def _overlay_intraday(self, yf, items, now: datetime, got: set[str]) -> int:
+        """Replace the daily close with the latest intraday mark where we can.
+
+        Best-effort and per-symbol: any failure leaves the honest daily close
+        in place. Only touches names we already marked from Yahoo this pass.
+        """
+        if not self.settings.providers.intraday_marks:
+            return 0
+        n = 0
+        for item in items:
+            if item.symbol not in got:
+                continue
+            try:
+                px = _intraday_last_inr(self.session, item.symbol, yf, self.settings)
+            except Exception:
+                px = None
+            if px is None or px <= 0:
+                continue
+            cache = self.session.scalar(select(PriceCache).where(PriceCache.symbol == item.symbol))
+            if cache is None:
+                continue
+            cache.last = px
+            cache.as_of = now
+            cache.quality = "intraday"
+            n += 1
+        return n
 
     def refresh_alt_markets(self) -> dict:
         """Binance + India F&O clones + FX/commodity Yahoo. No full NSE scan."""

@@ -15,6 +15,7 @@ Live never starts itself. One click of Seed turns this on.
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 from datetime import datetime, timezone
@@ -27,7 +28,7 @@ from meridian_v3.capital.sizer import stop_price
 from meridian_v3.engine.meta_label import primary_direction, rsi
 from meridian_v3.execution.brokers.paper_broker import PaperBroker
 from meridian_v3.execution.oms import OrderManager
-from meridian_v3.pipeline import mark_to_market, persist_belief, run_cycle
+from meridian_v3.pipeline import mark_to_market, persist_belief, persist_logit_update, run_cycle
 from meridian_v3.router.calendar import (
     INDIA_WEEKEND_FLATTEN,
     coverage_note,
@@ -193,9 +194,13 @@ def manage_exits(
         )
         if not reason:
             continue
+        entry_avg = float(pos.avg_price or 0.0)
         out = oms.close_position(pos, price=last, reason=reason)
         if out.get("ok"):
-            persist_belief(session, won=float(out.get("pnl") or 0) > 0)
+            # A same-mark EOD/weekend flatten with no real move is a cost-only
+            # scratch, not a directional loss — it must not poison the belief.
+            if not _is_costonly_flatten(reason, entry_avg, last, settings):
+                _train_from_close(session, pos, won=float(out.get("pnl") or 0) > 0)
             closed += 1
             symbols.append(pos.symbol)
             if is_india_market(pos.market):
@@ -242,9 +247,11 @@ def flatten_india_paper(
         last = cache.last if cache is not None and cache.last else pos.avg_price
         if not last:
             continue
+        entry_avg = float(pos.avg_price or 0.0)
         out = oms.close_position(pos, price=last, reason=INDIA_WEEKEND_FLATTEN)
         if out.get("ok"):
-            persist_belief(session, won=float(out.get("pnl") or 0) > 0)
+            if not _is_costonly_flatten(INDIA_WEEKEND_FLATTEN, entry_avg, last, settings):
+                _train_from_close(session, pos, won=float(out.get("pnl") or 0) > 0)
             symbols.append(pos.symbol)
     paper = session.scalar(select(AccountState).where(AccountState.venue == "paper"))
     freed = max(0.0, float(paper.cash) - cash_before) if paper is not None else 0.0
@@ -255,6 +262,41 @@ def flatten_india_paper(
         "symbols": symbols,
         "cash": float(paper.cash) if paper is not None else 0.0,
     }
+
+
+def _train_from_close(session: Session, pos: Position, won: bool) -> None:
+    """Feed a genuine paper outcome to both trainers (belief + logistic).
+
+    Called from the same two spots the old belief-only training happened —
+    `manage_exits` and `flatten_india_paper` — right after a real (non
+    cost-only) exit. 1.1 wires the online logistic in alongside the Beta
+    belief so `p_success` actually moves as the book closes clips, instead
+    of a fixed cold-start formula forever.
+    """
+    persist_belief(session, won=won)
+    try:
+        features = json.loads(pos.feature_json or "{}")
+    except (TypeError, ValueError):
+        features = {}
+    if features:
+        persist_logit_update(session, features, won)
+
+
+def _is_costonly_flatten(reason: str, avg: float, exit_mark: float, settings) -> bool:
+    """True for a session-flatten that closed at essentially the same mark.
+
+    Only EOD / weekend flattens qualify — a genuine stop, target, or tape-flip
+    always trains the belief. A flatten where |exit − entry| is within
+    ``execution.flat_scratch_pct`` of entry moved nothing directional; it only
+    paid fees, so it is bucketed as a no-signal scratch and skipped.
+    """
+    is_flatten = reason.startswith("End of day") or reason == INDIA_WEEKEND_FLATTEN
+    if not is_flatten:
+        return False
+    avg = float(avg or 0.0)
+    if avg <= 0:
+        return False
+    return abs(float(exit_mark) - avg) <= avg * settings.execution.flat_scratch_pct
 
 
 def _exit_reason(

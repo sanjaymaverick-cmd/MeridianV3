@@ -111,6 +111,10 @@ safety:
   session_close: "15:30"
   timezone: Asia/Kolkata
 
+execution:
+  max_fill_deviation_pct: 0.25
+  flat_scratch_pct: 0.001
+
 decision:
   paper_all_signals: true
   live_requires_arm: true
@@ -155,6 +159,9 @@ providers:
   yfinance_enabled: true
   price_ttl_minutes: 15
   request_sleep_ms: 400
+  intraday_marks: true
+  intraday_interval: "5m"
+  intraday_period: "1d"
 
 modules:
   watchlist: true

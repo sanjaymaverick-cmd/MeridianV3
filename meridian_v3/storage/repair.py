@@ -45,6 +45,13 @@ def repair_shifted_clips(session: Session) -> int:
     rows = list(session.scalars(select(Position).where(Position.venue == "paper")))
     fixed = 0
     for pos in rows:
+        # A closed clip with no exit_price has nothing honest to align against.
+        # Never rewrite avg_price against today's mark: reconstruct the exit
+        # from the real matching fill, or flag the row unreconciled.
+        if pos.status == "closed" and pos.exit_price is None:
+            if _reconcile_closed_without_exit(session, pos):
+                fixed += 1
+            continue
         mark = _mark_for(session, pos)
         avg = float(pos.avg_price or 0.0)
         new_avg, new_mark, scale = align_prices(avg, mark, pos.market)
@@ -74,6 +81,43 @@ def repair_shifted_clips(session: Session) -> int:
         fixed += 1
     fixed += _normalize_open_stops(session)
     return fixed
+
+
+def _reconcile_closed_without_exit(session: Session, pos: Position) -> bool:
+    """Give a closed-but-exit-less clip an honest exit, or flag it.
+
+    Looks up the matching exit ``Fill`` (same approach ``book_view._infer_exit``
+    uses) and reconstructs ``exit_price`` / ``realized_pnl`` / ``close_qty``
+    from it. If no exit fill exists there is nothing to reconcile against, so
+    the row is marked ``status="unreconciled"`` — visibly excluded from equity
+    and training rather than silently rewritten against the current mark.
+
+    Idempotent: once ``exit_price`` is set (or the row is flagged) a second
+    run of :func:`repair_shifted_clips` no longer enters this branch.
+    """
+    exit_side = "sell" if pos.side == "buy" else "buy"
+    fill = session.scalar(
+        select(Fill)
+        .where(Fill.symbol == pos.symbol, Fill.venue == pos.venue, Fill.side == exit_side)
+        .order_by(Fill.filled_at.desc())
+    )
+    if fill is None:
+        pos.status = "unreconciled"
+        return True
+    exit_price = float(fill.price or 0.0)
+    if exit_price <= 0:
+        pos.status = "unreconciled"
+        return True
+    qty = float(pos.close_qty or 0.0) or float(pos.qty or 0.0) or float(fill.qty or 0.0)
+    avg = float(pos.avg_price or 0.0)
+    raw = (exit_price - avg) * qty
+    if pos.side == "sell":
+        raw = -raw
+    pos.exit_price = exit_price
+    pos.realized_pnl = raw - _fees_for(session, pos)
+    if not pos.close_qty and qty:
+        pos.close_qty = qty
+    return True
 
 
 def _normalize_open_stops(session: Session) -> int:

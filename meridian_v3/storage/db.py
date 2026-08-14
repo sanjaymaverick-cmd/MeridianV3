@@ -77,6 +77,7 @@ def _migrate(engine) -> None:
             "exit_price": "FLOAT",
             "realized_pnl": "FLOAT",
             "close_qty": "FLOAT",
+            "feature_json": "TEXT DEFAULT '{}'",
         }.items():
             if name not in pos_cols:
                 conn.execute(text(f"ALTER TABLE positions ADD COLUMN {name} {ddl}"))

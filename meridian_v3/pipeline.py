@@ -15,11 +15,12 @@ from meridian_v3.engine.bayesian import BetaBelief, update_belief
 from meridian_v3.engine.confluence import FactorVote
 from meridian_v3.engine.drawdown import assess_drawdown
 from meridian_v3.engine.edge import estimate_equity_costs
-from meridian_v3.engine.meta_label import primary_direction, rsi
+from meridian_v3.engine.meta_label import OnlineLogit, primary_direction, rsi
 from meridian_v3.execution.brokers.paper_broker import PaperBroker
 from meridian_v3.execution.oms import OrderManager
 from meridian_v3.router.calendar import india_session, is_india_market
 from meridian_v3.router.markets import market_for
+from meridian_v3.scoring.composite import blend_weights, composite_score, factor_parts_from_tape, map_action
 from meridian_v3.signals.engines import evaluate_signals
 from meridian_v3.storage.schema import (
     AccountState,
@@ -27,6 +28,7 @@ from meridian_v3.storage.schema import (
     DeskEvent,
     EquityPoint,
     FactorScore,
+    LogitWeight,
     Position,
     PriceBar,
     PriceCache,
@@ -34,6 +36,10 @@ from meridian_v3.storage.schema import (
     SignalRow,
     WatchItem,
 )
+
+# Feature row name for the online logistic's intercept — kept distinct from
+# any real feature key (see engine/meta_label.py:default_features).
+_LOGIT_BIAS = "__bias__"
 
 
 def _belief(session: Session, rule: str) -> BetaBelief:
@@ -62,6 +68,98 @@ def persist_belief(session: Session, won: bool, rule: str = "core") -> BetaBelie
     row.wins = belief.wins
     row.losses = belief.losses
     return belief
+
+
+def load_logit(session: Session, rule: str = "core") -> OnlineLogit:
+    """Rebuild the online logistic from its persisted weights (1.1).
+
+    An untrained (``updates == 0``) model falls back to the fixed cold-start
+    formula in ``engine/meta_label.py`` — same behaviour as before this was
+    wired up, just no longer stuck there forever once real outcomes land.
+    """
+    rows = list(session.scalars(select(LogitWeight).where(LogitWeight.rule_name == rule)))
+    model = OnlineLogit()
+    updates = 0
+    for row in rows:
+        updates = max(updates, row.updates)
+        if row.feature == _LOGIT_BIAS:
+            model.bias = row.weight
+        else:
+            model.weights[row.feature] = row.weight
+    model.updates = updates
+    return model
+
+
+def persist_logit_update(
+    session: Session, features: dict[str, float], won: bool, rule: str = "core"
+) -> OnlineLogit:
+    """Load the persisted logistic, call ``.update()`` on a real outcome, save it back.
+
+    Called from the same place ``persist_belief`` is — a paper clip closing —
+    so the meta-label logistic actually learns from the book instead of
+    computing a brand-new, zero-``updates`` instance on every decision (F4).
+    """
+    model = load_logit(session, rule)
+    model.update(features, won)
+    bias_row = session.scalar(
+        select(LogitWeight).where(LogitWeight.rule_name == rule, LogitWeight.feature == _LOGIT_BIAS)
+    )
+    if bias_row is None:
+        session.add(LogitWeight(rule_name=rule, feature=_LOGIT_BIAS, weight=model.bias, updates=model.updates))
+    else:
+        bias_row.weight = model.bias
+        bias_row.updates = model.updates
+    for key, value in model.weights.items():
+        row = session.scalar(select(LogitWeight).where(LogitWeight.rule_name == rule, LogitWeight.feature == key))
+        if row is None:
+            session.add(LogitWeight(rule_name=rule, feature=key, weight=value, updates=model.updates))
+        else:
+            row.weight = value
+            row.updates = model.updates
+    session.flush()
+    return model
+
+
+def _score_symbol(
+    session: Session,
+    symbol: str,
+    cache: PriceCache,
+    desk_mood: str,
+    rsi_value: float | None,
+    now: datetime,
+) -> float:
+    """Compute and persist a real V1 five-factor row for this symbol (1.2).
+
+    Only ``technical`` and ``valuation`` have a live data source (the tape in
+    ``price_cache``) — ``composite_score`` skips the ``quality``/``ownership``/
+    ``sentiment`` factors we have no fundamentals feed for, rather than us
+    faking numbers for them.
+    """
+    parts = factor_parts_from_tape(
+        last=cache.last,
+        sma20=cache.sma20,
+        sma50=cache.sma50,
+        high20=cache.high20,
+        low20=cache.low20,
+        rsi_value=rsi_value,
+    )
+    weights = blend_weights(desk_mood)
+    composite = composite_score(parts, weights)
+    action = map_action(composite, desk_mood)
+    session.add(
+        FactorScore(
+            symbol=symbol,
+            quality=parts.get("quality"),
+            valuation=parts.get("valuation"),
+            technical=parts.get("technical"),
+            ownership=parts.get("ownership"),
+            sentiment=parts.get("sentiment"),
+            composite=float(composite) if composite is not None else None,
+            action=action,
+            as_of=now,
+        )
+    )
+    return float(composite) if composite is not None else 6.5
 
 
 def mark_to_market(session: Session, venue: str = "paper") -> float:
@@ -109,6 +207,10 @@ def run_cycle(
 
     broker = PaperBroker(cash=paper_acct.cash)
     oms = OrderManager(session, broker)
+    # 1.1 — load the persisted online logistic once per cycle so every
+    # decision this cycle scores against the same, real, trained weights
+    # (instead of a brand-new zero-`updates` OnlineLogit every call).
+    logit_model = load_logit(session, "core")
     opened = 0
     decided = 0
     holds = 0
@@ -131,10 +233,10 @@ def run_cycle(
         highs = [b.high for b in bars]
         lows = [b.low for b in bars]
         atr = cache.atr or average_true_range(highs, lows, closes, 14)
-        score_row = session.scalar(
-            select(FactorScore).where(FactorScore.symbol == item.symbol).order_by(FactorScore.as_of.desc())
-        )
-        score = score_row.composite if score_row else 6.5
+        rsi_value = rsi(closes) if closes else None
+        # 1.2 — write a real V1 five-factor row every cycle instead of reading
+        # the dead `factor_scores` table (which nothing ever inserted into).
+        score = _score_symbol(session, item.symbol, cache, desk_mood, rsi_value, now)
         raws = evaluate_signals(
             symbol=item.symbol,
             asset_class=item.asset_class,
@@ -157,7 +259,7 @@ def run_cycle(
             last=cache.last,
             sma_fast=cache.sma20,
             sma_slow=cache.sma50,
-            rsi=rsi(closes) if closes else None,
+            rsi=rsi_value,
             breakout=any(r.rule_name == "breakout_volume" for r in raws),
             mean_revert=any(r.rule_name == "mean_reversion_bands" and r.side == "buy" for r in raws),
             regime=desk_mood,
@@ -195,15 +297,10 @@ def run_cycle(
                 live_armed=armed,
                 live_today=int(live_today),
                 open_count=int(open_paper),
-                equity_score=70 if item.asset_class == "equity" else 40,
-                options_score=70 if item.asset_class in {"option", "index"} or item.symbol.endswith(".C") else 20,
-                forex_score=72 if item.asset_class == "fx" else 15,
-                crypto_score=75 if "crypto" in item.asset_class or item.symbol.endswith("USDT") or ".USDT" in item.symbol else 15,
-                futures_score=72 if item.asset_class in {"future", "crypto_futures"} or item.symbol.endswith(".F") else 15,
-                commodity_score=74 if item.symbol.endswith(".X") else 15,
                 preferred_market=market_for(item.asset_class, item.symbol),
                 now=now,
                 belief=_belief(session, "core"),
+                logit=logit_model,
                 held_qty=held.qty if held else 0.0,
             ),
             settings,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -215,6 +215,11 @@ class Position(Base):
     exit_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     realized_pnl: Mapped[float | None] = mapped_column(Float, nullable=True)
     close_qty: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # The meta-label feature vector at the moment this clip was opened, so
+    # the online logistic can be trained on the same features it was scored
+    # with, once we know whether the clip won. "{}" when unknown (e.g. a
+    # manually-seeded row, or a position opened before this column existed).
+    feature_json: Mapped[str] = mapped_column(Text, default="{}")
 
 
 class BeliefRow(Base):
@@ -226,6 +231,24 @@ class BeliefRow(Base):
     beta: Mapped[float] = mapped_column(Float, default=4.0)
     wins: Mapped[int] = mapped_column(Integer, default=0)
     losses: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class LogitWeight(Base):
+    """Persisted coefficients for the online meta-label logistic (per rule).
+
+    One row per feature, plus one row with ``feature="__bias__"`` for the
+    intercept. Kept as separate rows (not a single JSON blob) so a reader
+    can `SELECT * FROM logit_weights` and see the model in plain SQL.
+    """
+
+    __tablename__ = "logit_weights"
+    __table_args__ = (UniqueConstraint("rule_name", "feature", name="uq_logit_weight_rule_feature"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    rule_name: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    feature: Mapped[str] = mapped_column(String(32), nullable=False)
+    weight: Mapped[float] = mapped_column(Float, default=0.0)
+    updates: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class FactorScore(Base):

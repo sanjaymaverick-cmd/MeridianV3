@@ -2,8 +2,48 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from meridian_v3.autopilot import flatten_india_paper, manage_exits, set_paper_auto, tick
-from meridian_v3.storage.schema import AccountState, Position, PriceCache
+from meridian_v3.storage.schema import AccountState, BeliefRow, Position, PriceCache
 from meridian_v3.storage.seed import seed_demo
+
+
+def _now():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _seed_one_open_india(session, *, last, avg=1400.0):
+    now = _now()
+    session.add(AccountState(venue="paper", cash=50_000, equity=50_000, peak=50_000, updated_at=now))
+    session.add(BeliefRow(rule_name="core", alpha=4.0, beta=9.0, wins=0, losses=5))
+    session.add(PriceCache(symbol="INFY", last=last, quality="live"))
+    session.add(
+        Position(
+            venue="paper", market="equity_cash", symbol="INFY", side="buy",
+            qty=2, avg_price=avg, stop=1000.0, horizon="intraday", status="open",
+            source="test", opened_at=now,
+        )
+    )
+    session.flush()
+
+
+def test_eod_flatten_no_move_does_not_train_belief(session):
+    """0.5 — a same-mark EOD flatten is a cost-only scratch, not a belief loss."""
+    _seed_one_open_india(session, last=1400.0, avg=1400.0)
+    ist_close = datetime(2026, 8, 17, 15, 20, tzinfo=ZoneInfo("Asia/Kolkata"))
+    out = manage_exits(session, in_session=True, minutes_to_close=10, now=ist_close)
+    assert out["closed"] == 1
+    belief = session.query(BeliefRow).filter_by(rule_name="core").one()
+    assert belief.losses == 5  # unchanged — the tape did not move
+    assert belief.wins == 0
+
+
+def test_eod_flatten_with_real_move_still_trains_belief(session):
+    """0.5 — a flatten that actually moved is a genuine outcome and must train."""
+    _seed_one_open_india(session, last=1460.0, avg=1400.0)
+    ist_close = datetime(2026, 8, 17, 15, 20, tzinfo=ZoneInfo("Asia/Kolkata"))
+    out = manage_exits(session, in_session=True, minutes_to_close=10, now=ist_close)
+    assert out["closed"] == 1
+    belief = session.query(BeliefRow).filter_by(rule_name="core").one()
+    assert belief.wins == 1  # real +move booked a win
 
 
 def test_tick_respects_auto_off(session):
