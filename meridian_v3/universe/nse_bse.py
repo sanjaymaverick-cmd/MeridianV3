@@ -43,7 +43,9 @@ ALGO_UNIVERSE: tuple[tuple[str, str, str, str], ...] = (
     ("POWERGRID", "NSE", "equity", "Nifty 50"),
     ("ULTRACEMCO", "NSE", "equity", "Nifty 50"),
     ("TATASTEEL", "NSE", "equity", "Nifty 50"),
-    ("TATAMOTORS", "NSE", "equity", "Nifty 50"),
+    # TATAMOTORS renamed/demerged to TMPV (Tata Motors Passenger Vehicles
+    # Ltd) effective 2025-10-24 — same continuing listing, new ticker.
+    ("TMPV", "NSE", "equity", "Nifty 50"),
     ("ADANIENT", "NSE", "equity", "Nifty 50"),
     ("ADANIPORTS", "NSE", "equity", "Nifty 50"),
     ("ASIANPAINT", "NSE", "equity", "Nifty 50"),
@@ -107,7 +109,9 @@ ALGO_UNIVERSE: tuple[tuple[str, str, str, str], ...] = (
     ("DIXON", "NSE", "equity", "Midcap"),
     ("SOLARINDS", "NSE", "equity", "Midcap"),
     ("MAXHEALTH", "NSE", "equity", "Nifty 50"),
-    ("ZOMATO", "NSE", "equity", "New age"),
+    # ZOMATO renamed to ETERNAL (corporate entity rename only, no demerger
+    # or value transfer) effective 2025-04-09.
+    ("ETERNAL", "NSE", "equity", "New age"),
     ("PAYTM", "NSE", "equity", "New age"),
     ("POLICYBZR", "NSE", "equity", "New age"),
     ("NAUKRI", "NSE", "equity", "Nifty Next 50"),

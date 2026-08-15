@@ -45,6 +45,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Rewrite 10x / margin-priced paper fills and recompute honest settled P&L",
     )
     sub.add_parser("desktop", help="Open MERIDIAN V3 in a native window")
+    backfill = sub.add_parser(
+        "backfill-history",
+        help="Backfill years of NSE daily bars (via jugaad-data) into historical_bars, for backtesting",
+    )
+    backfill.add_argument("--years", type=int, default=5)
     sub.add_parser(
         "register-dry-run-broker",
         help=(
@@ -84,6 +89,8 @@ def main(argv: list[str] | None = None) -> int:
         return _desktop()
     if args.cmd == "register-dry-run-broker":
         return _register_dry_run_broker()
+    if args.cmd == "backfill-history":
+        return _backfill_history(years=args.years)
     return _serve()
 
 
@@ -205,6 +212,24 @@ def _repair_book() -> int:
             mark_to_market(session, "paper")
             session.commit()
         print(f"repaired {n} paper clip(s). Avg buy is the rupee tape now. Settled P&L was rewritten.")
+        return 0
+    finally:
+        session.close()
+
+
+def _backfill_history(*, years: int) -> int:
+    from meridian_v3.data_providers.historical import backfill_nse_watchlist
+
+    session = get_session()
+    try:
+        result = backfill_nse_watchlist(session, years=years)
+        session.commit()
+        print(
+            f"backfilled {result['ok']}/{result['symbols']} NSE symbol(s), "
+            f"{result['bars_written']} bar(s) written."
+        )
+        if result["failed"]:
+            print(f"no data for: {', '.join(result['failed'])}")
         return 0
     finally:
         session.close()
