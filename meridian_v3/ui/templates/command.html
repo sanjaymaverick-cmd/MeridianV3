@@ -76,10 +76,11 @@
 <article class="panel" id="panel-open-clips">
   <h2>Open clips</h2>
   <table>
-    <thead><tr><th>Venue</th><th>Name</th><th>Side</th><th>Qty</th><th>Avg buy</th><th>Current</th><th>Fees</th><th>Open P&amp;L</th><th>Market</th></tr></thead>
+    <thead><tr><th>Opened</th><th>Venue</th><th>Name</th><th>Side</th><th>Qty</th><th>Avg buy</th><th>Current</th><th>Fees</th><th>Open P&amp;L</th><th>Market</th></tr></thead>
     <tbody>
     {% for p in positions %}
       <tr>
+        <td class="num">{% if p.opened_at %}{{ p.opened_at.strftime('%d %b %H:%M') }}{% else %}—{% endif %}</td>
         <td>{{ p.venue }}</td>
         <td>{{ p.symbol }}{% if p.price_quality == 'fx_fallback' %} <span class="flag" title="Marked through the USDINR fallback rate, not a live cross-rate">fx est.</span>{% endif %}</td>
         <td>{{ p.side }}</td>
@@ -91,7 +92,7 @@
         <td>{{ p.market }}</td>
       </tr>
     {% else %}
-      <tr><td colspan="9">No open clips. Run a cycle after you seed the desk.</td></tr>
+      <tr><td colspan="10">No open clips. Run a cycle after you seed the desk.</td></tr>
     {% endfor %}
     </tbody>
   </table>

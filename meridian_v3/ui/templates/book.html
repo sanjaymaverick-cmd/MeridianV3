@@ -26,10 +26,11 @@
   <article class="panel" id="panel-paper-open">
     <h2>Paper — open</h2>
     <table>
-      <thead><tr><th>Name</th><th>Side</th><th>Qty</th><th>Avg buy</th><th>Current</th><th>Tape</th><th>Fees</th><th>Net</th></tr></thead>
+      <thead><tr><th>Opened</th><th>Name</th><th>Side</th><th>Qty</th><th>Avg buy</th><th>Current</th><th>Tape</th><th>Fees</th><th>Net</th></tr></thead>
       <tbody>
       {% for p in paper_pos %}
         <tr>
+          <td class="num">{% if p.opened_at %}{{ p.opened_at.strftime('%d %b %H:%M') }}{% else %}—{% endif %}</td>
           <td>{{ p.symbol }}{% if p.price_quality == 'fx_fallback' %} <span class="flag" title="Marked through the USDINR fallback rate, not a live cross-rate">fx est.</span>{% endif %}</td>
           <td>{{ p.side }}</td>
           <td class="num">{{ p.qty }}</td>
@@ -40,7 +41,7 @@
           <td class="num {{ p.pnl_class }}">{{ p.pnl | inr if p.pnl is not none else '—' }}</td>
         </tr>
       {% else %}
-        <tr><td colspan="8">No open paper clips.</td></tr>
+        <tr><td colspan="9">No open paper clips.</td></tr>
       {% endfor %}
       </tbody>
     </table>
@@ -48,10 +49,11 @@
   <article class="panel" id="panel-live-open">
     <h2>Live — open</h2>
     <table>
-      <thead><tr><th>Name</th><th>Side</th><th>Qty</th><th>Avg buy</th><th>Current</th><th>Tape</th><th>Fees</th><th>Net</th></tr></thead>
+      <thead><tr><th>Opened</th><th>Name</th><th>Side</th><th>Qty</th><th>Avg buy</th><th>Current</th><th>Tape</th><th>Fees</th><th>Net</th></tr></thead>
       <tbody>
       {% for p in live_pos %}
         <tr>
+          <td class="num">{% if p.opened_at %}{{ p.opened_at.strftime('%d %b %H:%M') }}{% else %}—{% endif %}</td>
           <td>{{ p.symbol }}{% if p.price_quality == 'fx_fallback' %} <span class="flag" title="Marked through the USDINR fallback rate, not a live cross-rate">fx est.</span>{% endif %}</td>
           <td>{{ p.side }}</td>
           <td class="num">{{ p.qty }}</td>
@@ -62,7 +64,7 @@
           <td class="num {{ p.pnl_class }}">{{ p.pnl | inr if p.pnl is not none else '—' }}</td>
         </tr>
       {% else %}
-        <tr><td colspan="8">Empty. Live stays off until you arm it.</td></tr>
+        <tr><td colspan="9">Empty. Live stays off until you arm it.</td></tr>
       {% endfor %}
       </tbody>
     </table>
