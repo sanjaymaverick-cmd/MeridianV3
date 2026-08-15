@@ -13,7 +13,9 @@ def _now():
 def _seed_one_open_india(session, *, last, avg=1400.0):
     now = _now()
     session.add(AccountState(venue="paper", cash=50_000, equity=50_000, peak=50_000, updated_at=now))
-    session.add(BeliefRow(rule_name="core", alpha=4.0, beta=9.0, wins=0, losses=5))
+    # Part 3 item 4 — belief is keyed by market now; this position's market
+    # is "equity_cash" (below), so the seeded prior must be too.
+    session.add(BeliefRow(rule_name="equity_cash", alpha=4.0, beta=9.0, wins=0, losses=5))
     session.add(PriceCache(symbol="INFY", last=last, quality="live"))
     session.add(
         Position(
@@ -26,23 +28,31 @@ def _seed_one_open_india(session, *, last, avg=1400.0):
 
 
 def test_eod_flatten_no_move_does_not_train_belief(session):
-    """0.5 — a same-mark EOD flatten is a cost-only scratch, not a belief loss."""
+    """0.5 — a same-mark EOD flatten is a cost-only scratch, not a belief loss.
+
+    Part 3 item 4 — belief is now keyed by market (``equity_cash`` here,
+    matching the seeded position), not the old global ``"core"`` rule.
+    """
     _seed_one_open_india(session, last=1400.0, avg=1400.0)
     ist_close = datetime(2026, 8, 17, 15, 20, tzinfo=ZoneInfo("Asia/Kolkata"))
     out = manage_exits(session, in_session=True, minutes_to_close=10, now=ist_close)
     assert out["closed"] == 1
-    belief = session.query(BeliefRow).filter_by(rule_name="core").one()
+    belief = session.query(BeliefRow).filter_by(rule_name="equity_cash").one()
     assert belief.losses == 5  # unchanged — the tape did not move
     assert belief.wins == 0
 
 
 def test_eod_flatten_with_real_move_still_trains_belief(session):
-    """0.5 — a flatten that actually moved is a genuine outcome and must train."""
+    """0.5 — a flatten that actually moved is a genuine outcome and must train.
+
+    Part 3 item 4 — belief is now keyed by market (``equity_cash`` here,
+    matching the seeded position), not the old global ``"core"`` rule.
+    """
     _seed_one_open_india(session, last=1460.0, avg=1400.0)
     ist_close = datetime(2026, 8, 17, 15, 20, tzinfo=ZoneInfo("Asia/Kolkata"))
     out = manage_exits(session, in_session=True, minutes_to_close=10, now=ist_close)
     assert out["closed"] == 1
-    belief = session.query(BeliefRow).filter_by(rule_name="core").one()
+    belief = session.query(BeliefRow).filter_by(rule_name="equity_cash").one()
     assert belief.wins == 1  # real +move booked a win
 
 

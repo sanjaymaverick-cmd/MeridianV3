@@ -275,8 +275,15 @@ def _train_from_close(session: Session, pos: Position, won: bool) -> None:
     cost-only) exit. 1.1 wires the online logistic in alongside the Beta
     belief so `p_success` actually moves as the book closes clips, instead
     of a fixed cold-start formula forever.
+
+    Part 3 item 4 — the belief is now keyed by ``pos.market`` (the same
+    market column every OMS write site populates from ``decision.market``)
+    instead of the single global ``"core"`` rule, so an equity outcome no
+    longer moves crypto's or futures' belief and vice versa. The online
+    logistic (``persist_logit_update`` below) intentionally still uses the
+    global ``"core"`` rule — only item 4's belief tracking is in scope here.
     """
-    persist_belief(session, won=won)
+    persist_belief(session, won=won, rule=pos.market or "equity_cash")
     try:
         features = json.loads(pos.feature_json or "{}")
     except (TypeError, ValueError):

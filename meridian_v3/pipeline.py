@@ -18,6 +18,7 @@ from meridian_v3.engine.confluence import FactorVote
 from meridian_v3.engine.drawdown import assess_drawdown
 from meridian_v3.engine.edge import estimate_equity_costs
 from meridian_v3.engine.meta_label import OnlineLogit, primary_direction, rsi
+from meridian_v3.engine.walkforward import Robustness, hit_rate, robustness, walk_forward_folds
 from meridian_v3.execution.brokers.paper_broker import PaperBroker
 from meridian_v3.execution.oms import OrderManager
 from meridian_v3.router.calendar import IST, india_session, is_india_market
@@ -45,6 +46,15 @@ _LOGIT_BIAS = "__bias__"
 
 
 def _belief(session: Session, rule: str) -> BetaBelief:
+    """Look up the Beta belief for ``rule``.
+
+    Part 3 item 4 — ``run_cycle`` now calls this with the routed *market*
+    (``equity_cash``, ``crypto_spot``, ...) instead of the single global
+    ``"core"`` rule name, so each market keeps its own prior instead of all
+    of them sharing one Beta(alpha, beta) blended across every asset class.
+    A market with no row yet gets the same Beta(4.0, 4.0) cold-start prior
+    ``"core"`` always used — there is no backfill from the old shared row.
+    """
     row = session.scalar(select(BeliefRow).where(BeliefRow.rule_name == rule))
     if row is None:
         return BetaBelief(4.0, 4.0, 0, 0)
@@ -70,6 +80,42 @@ def persist_belief(session: Session, won: bool, rule: str = "core") -> BetaBelie
     row.wins = belief.wins
     row.losses = belief.losses
     return belief
+
+
+def _market_robustness(session: Session, market: str, settings) -> Robustness:
+    """Part 3 item 5 — walk-forward robustness verdict for one market.
+
+    Walks the time-ordered realized P&L of that market's *closed paper*
+    positions (``venue="paper", status="closed"``; rows with no honest
+    ``realized_pnl`` — e.g. Phase 0's ``status="unreconciled"`` repairs —
+    are excluded by construction since they never reach ``status="closed"``
+    with a non-null P&L). ``hit_rate`` is the per-fold score
+    (``engine/walkforward.py``), folds come from ``walk_forward_folds``'s
+    own defaults (train=60, test=20, embargo=2), and the final verdict is
+    ``robustness(is_scores, oos_scores, max_gap=settings.decision.walkforward_oos_gap_max)``.
+
+    A market with fewer than ``train + embargo + test`` (82 by default)
+    closed positions produces zero folds; ``robustness([], [], ...)``
+    already returns a conservative ``robust=False`` ("Not enough
+    walk-forward folds.") for that case rather than this function inventing
+    a lower-data fallback.
+    """
+    pnls = list(
+        session.scalars(
+            select(Position.realized_pnl)
+            .where(
+                Position.venue == "paper",
+                Position.status == "closed",
+                Position.market == market,
+                Position.realized_pnl.is_not(None),
+            )
+            .order_by(Position.closed_at.asc())
+        )
+    )
+    folds = walk_forward_folds(len(pnls))
+    is_scores = [hit_rate(pnls[f.train_start : f.train_end]) for f in folds]
+    oos_scores = [hit_rate(pnls[f.test_start : f.test_end]) for f in folds]
+    return robustness(is_scores, oos_scores, max_gap=settings.decision.walkforward_oos_gap_max)
 
 
 def load_logit(session: Session, rule: str = "core") -> OnlineLogit:
@@ -330,6 +376,20 @@ def run_cycle(
     skipped_no_tape = 0
     ranked: list[tuple[float, object, object]] = []
 
+    # Part 3 item 5 — walk-forward robustness is scoped per market (same
+    # granularity as the item-4 belief split, just below) and involves a DB
+    # query plus a walk-forward computation, so it is computed at most once
+    # per distinct market this cycle (<= 8 possible markets), not once per
+    # watchlist symbol, and cached here for the rest of this call.
+    robustness_cache: dict[str, Robustness] = {}
+
+    def _cached_robustness(market: str) -> Robustness:
+        cached = robustness_cache.get(market)
+        if cached is None:
+            cached = _market_robustness(session, market, settings)
+            robustness_cache[market] = cached
+        return cached
+
     names = list(session.scalars(select(WatchItem).where(WatchItem.status == "active")))
     for item in names:
         cache = session.scalar(select(PriceCache).where(PriceCache.symbol == item.symbol))
@@ -391,6 +451,11 @@ def run_cycle(
                 Position.status == "open",
             )
         )
+        # Part 3 items 4/5 — the routed market is resolved once here and
+        # reused for the belief key, the robustness cache lookup, and
+        # `preferred_market` itself, so all three agree on exactly the same
+        # market a symbol was scored against.
+        market = market_for(item.asset_class, item.symbol)
         decision = decide(
             DecisionInput(
                 symbol=item.symbol,
@@ -410,10 +475,11 @@ def run_cycle(
                 live_armed=armed,
                 live_today=int(live_today),
                 open_count=int(open_paper),
-                preferred_market=market_for(item.asset_class, item.symbol),
+                preferred_market=market,
                 now=now,
-                belief=_belief(session, "core"),
+                belief=_belief(session, market),
                 logit=logit_model,
+                robustness=_cached_robustness(market),
                 held_qty=held.qty if held else 0.0,
             ),
             settings,
