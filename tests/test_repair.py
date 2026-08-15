@@ -105,6 +105,94 @@ def test_repairs_silver_short_booked_at_one_tenth(session):
     assert repair_shifted_clips(session) == 0
 
 
+def test_repair_caps_a_peak_contaminated_by_the_fixed_bad_fill(session):
+    """A mispriced fill can inflate equity before repair ever sees it, and
+    the drawdown peak is a one-way ratchet — mark_to_market never lowers it.
+    Once repair fixes the underlying position, a peak set from that same
+    bad fill is left permanently measuring drawdown against a number that
+    was never real. Repair must cap it back down to what's honestly known
+    (starting capital, or current equity if that's ever higher)."""
+    from meridian_v3.config import get_settings
+
+    settings = get_settings()
+    _paper(session, cash=30_000)
+    paper = session.query(AccountState).one()
+    # The false spike this mirrors: a decimal-slide fill briefly showed
+    # ~₹103k of equity before repair caught it; the peak ratchet never came
+    # back down on its own.
+    paper.peak = 103_373.36
+    paper.equity = 103_373.36
+
+    session.add(PriceCache(symbol="SILVER.X", last=6228.69, quality="live"))
+    opened = _now()
+    session.add(
+        Position(
+            venue="paper", market="global_commodities", symbol="SILVER.X", side="sell",
+            qty=0, avg_price=622.87, close_qty=0.04, exit_price=6228.69, realized_pnl=-224.32,
+            status="closed", source="test", opened_at=opened, closed_at=opened,
+        )
+    )
+    session.add(
+        Fill(
+            venue="paper", symbol="SILVER.X", side="sell", qty=0.04, price=622.87, fees=0.01,
+            filled_at=opened, note="PAPER FILL: SELL 0.04 SILVER.X near ₹622.87.",
+        )
+    )
+    session.add(
+        Fill(
+            venue="paper", symbol="SILVER.X", side="buy", qty=0.04, price=6228.69, fees=0.09,
+            filled_at=opened, note="PAPER EXIT: Stop hit.  P&L ₹-224 after fees ₹0.09.",
+        )
+    )
+    session.flush()
+
+    assert repair_shifted_clips(session) == 1
+    # Nothing left to fix -> capping the peak never runs on a clean pass.
+    assert paper.peak == pytest.approx(settings.account.starting_equity_inr)
+    assert repair_shifted_clips(session) == 0
+    assert paper.peak == pytest.approx(settings.account.starting_equity_inr)  # stays capped
+
+
+def test_repair_does_not_touch_an_honest_peak(session):
+    """Positive control: a repair that fixes something must not cap a peak
+    that's genuinely earned (equity above starting capital), and a repair
+    that fixes nothing must not touch the peak at all."""
+    _paper(session, cash=30_000)
+    paper = session.query(AccountState).one()
+    paper.peak = 60_000.0
+    paper.equity = 60_000.0
+    paper.cash = 60_000.0
+
+    session.add(PriceCache(symbol="SILVER.X", last=6228.69, quality="live"))
+    opened = _now()
+    session.add(
+        Position(
+            venue="paper", market="global_commodities", symbol="SILVER.X", side="sell",
+            qty=0, avg_price=622.87, close_qty=0.04, exit_price=6228.69, realized_pnl=-224.32,
+            status="closed", source="test", opened_at=opened, closed_at=opened,
+        )
+    )
+    session.add(
+        Fill(
+            venue="paper", symbol="SILVER.X", side="sell", qty=0.04, price=622.87, fees=0.01,
+            filled_at=opened, note="entry",
+        )
+    )
+    session.add(
+        Fill(
+            venue="paper", symbol="SILVER.X", side="buy", qty=0.04, price=6228.69, fees=0.09,
+            filled_at=opened, note="exit",
+        )
+    )
+    session.flush()
+
+    assert repair_shifted_clips(session) == 1
+    # The repair's own cash correction can nudge equity (and therefore the
+    # ratchet) slightly, but a genuinely-earned peak must never be capped
+    # *down* the way the contaminated one above is.
+    assert paper.peak >= 60_000.0
+
+
 def test_repairs_gold_long_and_leaves_honest_silver_alone(session):
     _paper(session)
     session.add(

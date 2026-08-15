@@ -94,7 +94,43 @@ def repair_shifted_clips(session: Session) -> int:
         _scale_fills(session, pos, new_mark or mark, scale, new_pnl=new_pnl)
         fixed += 1
     fixed += _normalize_open_stops(session)
+    if fixed and paper is not None:
+        _reconcile_contaminated_peak(session, paper, settings)
     return fixed
+
+
+def _reconcile_contaminated_peak(session: Session, paper: AccountState, settings) -> None:
+    """A mispriced fill can inflate equity before repair ever sees it, and
+    the drawdown peak is a one-way ratchet (``mark_to_market`` never lowers
+    it) — so a since-corrected bad fill can leave the account permanently
+    measuring drawdown against a peak that was never real. (This is exactly
+    what happened once already: a decimal-slide fill briefly showed
+    ₹1,03,373 of equity before repair caught it, and the peak stayed there
+    forever after even though the position underneath it was fixed.)
+
+    Only runs when this repair pass actually changed something (``fixed``
+    in the caller) — a clean boot never second-guesses a peak nothing here
+    touched. Recomputes honest equity first (so the check compares against
+    today's real cash+positions, not a stale ``AccountState.equity``), then
+    caps the peak down to ``max(starting capital, honest equity)`` if it's
+    sitting above that. Never claims a more specific historical peak than
+    that — reconstructing what equity truly was at every past moment with
+    corrected prices would need replaying the whole fill history, which is
+    out of scope for a boot-time repair.
+    """
+    from meridian_v3.pipeline import mark_to_market  # lazy: avoid a module cycle
+
+    honest_equity = mark_to_market(session, "paper")
+    honest_peak = max(settings.account.starting_equity_inr, honest_equity)
+    if paper.peak > honest_peak + 0.01:
+        old_peak = paper.peak
+        paper.peak = honest_peak
+        emit_alert(
+            session,
+            "peak_corrected",
+            f"Paper account peak corrected from ₹{old_peak:,.2f} to ₹{honest_peak:,.2f} after "
+            f"repair fixed mispriced data — the old peak was never honestly earned.",
+        )
 
 
 def _reconcile_closed_without_exit(session: Session, pos: Position) -> bool:
