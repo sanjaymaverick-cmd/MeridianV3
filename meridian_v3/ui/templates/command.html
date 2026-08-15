@@ -65,6 +65,10 @@
 
 <article class="panel" id="panel-equity-curve">
   <h2>Paper equity vs. peak</h2>
+  {% if paper_dd %}
+  <p class="figure {{ 'down' if paper_dd.drawdown > 0.005 else '' }}">{{ '%.1f'|format(paper_dd.drawdown * 100) }}%</p>
+  <p class="meta">Current drawdown from peak · Peak <span class="num">{{ paper_dd.peak | inr }}</span> · Equity <span class="num">{{ paper_dd.equity | inr }}</span></p>
+  {% endif %}
   <div class="chart-box chart-box-sm" data-equity-curve data-height="220"></div>
   <p class="meta">Gold = equity. Dashed line = running peak. Shaded gap = drawdown from peak — the fastest "is the book okay" glance on this page.</p>
 </article>

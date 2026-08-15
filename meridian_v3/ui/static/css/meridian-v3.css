@@ -32,7 +32,18 @@ body.light {
   --line: #ddd6c8;
   --ivory: #2a261f;
   --mist: #5c564b;
-  --ash: #7a7366;
+  --ash: #6d6659;
+  /* 2.E.17 — --gold (and --elevated, which mirrors it) is tuned for the
+     near-black dark palette; unchanged, it measures ~2.1-2.4:1 against the
+     light palette's cream panels, well under WCAG AA's 4.5:1 for the small
+     uppercase text it's used on (.kicker, .badge, .defs dt, the 2.C.10
+     sort-direction glyphs). Darken it for light mode only — same hue,
+     deeper — so gold accents stay legible; dark theme is untouched.
+     --ash is nudged darker for the same reason: it measured ~4.1-4.2:1 on
+     --panel, just under AA (this is what .chart-box .skeleton-state's
+     loading text uses, among other labels). */
+  --gold: #7a5c25;
+  --elevated: #7a5c25;
 }
 
 *, *::before, *::after { box-sizing: border-box; }
