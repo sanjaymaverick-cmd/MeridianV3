@@ -17,6 +17,14 @@ from meridian_v3.storage.seed import seed_demo
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Every command prints rupee figures somewhere. A default Windows
+    # console (cp1252) can't encode "₹" and crashes on print() -- reconfigure
+    # to UTF-8 unconditionally rather than requiring every caller to set
+    # PYTHONIOENCODING=utf-8 by hand. reconfigure() exists on real streams;
+    # a piped/redirected stdout in a test harness may not have it.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(
         prog="meridian_v3",
         description="MERIDIAN V3 personal auto-trading desk (isolated from v1 and v2)",
@@ -50,6 +58,13 @@ def main(argv: list[str] | None = None) -> int:
         help="Backfill years of NSE daily bars (via jugaad-data) into historical_bars, for backtesting",
     )
     backfill.add_argument("--years", type=int, default=5)
+    bt = sub.add_parser(
+        "backtest",
+        help="Replay the real decision/execution pipeline against historical_bars on an isolated DB",
+    )
+    bt.add_argument("--symbols", nargs="+", required=True, help="e.g. --symbols RELIANCE INFY TCS")
+    bt.add_argument("--years", type=int, default=5, help="Years of history ending today")
+    bt.add_argument("--capital", type=float, default=50_000.0)
     sub.add_parser(
         "register-dry-run-broker",
         help=(
@@ -91,6 +106,8 @@ def main(argv: list[str] | None = None) -> int:
         return _register_dry_run_broker()
     if args.cmd == "backfill-history":
         return _backfill_history(years=args.years)
+    if args.cmd == "backtest":
+        return _backtest(symbols=args.symbols, years=args.years, capital=args.capital)
     return _serve()
 
 
@@ -233,6 +250,24 @@ def _backfill_history(*, years: int) -> int:
         return 0
     finally:
         session.close()
+
+
+def _backtest(*, symbols: list[str], years: int, capital: float) -> int:
+    from datetime import date, timedelta
+
+    from meridian_v3.backtest.engine import run_backtest
+    from meridian_v3.backtest.report import summarize
+
+    symbols = [s.upper() for s in symbols]
+    end = date.today()
+    start = end - timedelta(days=365 * years)
+    try:
+        result = run_backtest(symbols, start=start, end=end, starting_capital=capital)
+    except ValueError as exc:
+        print(str(exc))
+        return 1
+    print(summarize(result))
+    return 0
 
 
 def _arm(*, on: bool) -> int:
