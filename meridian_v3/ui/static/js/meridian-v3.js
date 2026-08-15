@@ -156,6 +156,25 @@
     `;
   };
 
+  // 2.A.1 — "Arm live" used to submit instantly with no confirmation. The
+  // adapter-connected fact is computed server-side (routes.py:safety_page,
+  // sourced from execution/brokers/plugin.py:get_live_broker) and handed to
+  // this form as a data attribute — this code only reads it, it never
+  // guesses whether a broker is registered.
+  const wireArmConfirm = () => {
+    document.querySelectorAll("form[data-confirm-arm]").forEach((form) => {
+      form.addEventListener("submit", (event) => {
+        const adapter = form.dataset.adapterName || "";
+        const message = adapter
+          ? `Arm live trading on the ₹50,000 book with the '${adapter}' broker adapter connected?`
+          : "Arm live trading on the ₹50,000 book? No broker adapter is registered — orders will still be rejected until one is.";
+        if (!window.confirm(message)) {
+          event.preventDefault();
+        }
+      });
+    });
+  };
+
   document.addEventListener("DOMContentLoaded", () => {
     applyStoredTheme();
     document.querySelectorAll("[data-theme-toggle]").forEach((btn) => {
@@ -167,5 +186,6 @@
     });
     document.querySelectorAll(".chart-box").forEach(mountChart);
     document.querySelectorAll("#review-root").forEach(mountReview);
+    wireArmConfirm();
   });
 })();

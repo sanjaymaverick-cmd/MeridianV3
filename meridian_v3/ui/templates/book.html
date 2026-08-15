@@ -30,7 +30,7 @@
       <tbody>
       {% for p in paper_pos %}
         <tr>
-          <td>{{ p.symbol }}</td>
+          <td>{{ p.symbol }}{% if p.price_quality == 'fx_fallback' %} <span class="flag" title="Marked through the USDINR fallback rate, not a live cross-rate">fx est.</span>{% endif %}</td>
           <td>{{ p.side }}</td>
           <td class="num">{{ p.qty }}</td>
           <td class="num">{{ p.avg_buy | inr }}</td>
@@ -52,7 +52,7 @@
       <tbody>
       {% for p in live_pos %}
         <tr>
-          <td>{{ p.symbol }}</td>
+          <td>{{ p.symbol }}{% if p.price_quality == 'fx_fallback' %} <span class="flag" title="Marked through the USDINR fallback rate, not a live cross-rate">fx est.</span>{% endif %}</td>
           <td>{{ p.side }}</td>
           <td class="num">{{ p.qty }}</td>
           <td class="num">{{ p.avg_buy | inr }}</td>
@@ -68,6 +68,31 @@
     </table>
   </article>
 </div>
+{% if paper_unreconciled %}
+<article class="panel">
+  <h2>Unreconciled paper positions</h2>
+  <p class="note">
+    {{ paper_unreconciled|length }} closed clip{{ 's' if paper_unreconciled|length != 1 else '' }} could not be
+    matched to an honest exit fill during repair, so exit price and P&amp;L here would be unreliable — these are
+    excluded from the settled totals below and from training.
+    <span class="flag" title="A closed-clip repair could not find a matching exit fill to reconstruct an honest exit price for. Excluded from equity and training rather than guessed.">unreconciled</span>
+  </p>
+  <table>
+    <thead><tr><th>Name</th><th>Side</th><th>Qty</th><th>Avg buy</th><th>Opened</th></tr></thead>
+    <tbody>
+    {% for p in paper_unreconciled %}
+      <tr>
+        <td>{{ p.symbol }}</td>
+        <td>{{ p.side }}</td>
+        <td class="num">{{ p.qty }}</td>
+        <td class="num">{{ p.avg_buy | inr }}</td>
+        <td class="num">{% if p.opened_at %}{{ p.opened_at.strftime('%d %b %H:%M') }}{% else %}—{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</article>
+{% endif %}
 <article class="panel">
   <h2>Settled paper trades</h2>
   {% if paper_settled and paper_settled.count %}
@@ -80,7 +105,7 @@
     {% for p in paper_done %}
       <tr>
         <td class="num">{% if p.closed_at %}{{ p.closed_at.strftime('%d %b %H:%M') }}{% else %}—{% endif %}</td>
-        <td>{{ p.symbol }}</td>
+        <td>{{ p.symbol }}{% if p.price_quality == 'fx_fallback' %} <span class="flag" title="Marked through the USDINR fallback rate, not a live cross-rate">fx est.</span>{% endif %}</td>
         <td>{{ p.market_label }}</td>
         <td>{{ p.side }}</td>
         <td class="num">{{ p.qty }}</td>
@@ -108,7 +133,7 @@
     {% for p in live_done %}
       <tr>
         <td class="num">{% if p.closed_at %}{{ p.closed_at.strftime('%d %b %H:%M') }}{% else %}—{% endif %}</td>
-        <td>{{ p.symbol }}</td>
+        <td>{{ p.symbol }}{% if p.price_quality == 'fx_fallback' %} <span class="flag" title="Marked through the USDINR fallback rate, not a live cross-rate">fx est.</span>{% endif %}</td>
         <td>{{ p.market_label }}</td>
         <td>{{ p.side }}</td>
         <td class="num">{{ p.qty }}</td>
@@ -148,7 +173,7 @@
         <td class="num">{{ f.stt | inr }}</td>
         <td class="num">{{ f.stamp | inr }}</td>
         <td class="num">{{ f.fees | inr }}</td>
-        <td class="wrap">{{ f.note }}</td>
+        <td class="wrap">{{ f.note }}{% if f.correction_note %} <span class="flag" title="{{ f.correction_note }}">corrected</span>{% endif %}</td>
       </tr>
     {% else %}
       <tr><td colspan="12">No fills yet.</td></tr>

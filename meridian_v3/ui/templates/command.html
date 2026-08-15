@@ -71,7 +71,7 @@
     {% for p in positions %}
       <tr>
         <td>{{ p.venue }}</td>
-        <td>{{ p.symbol }}</td>
+        <td>{{ p.symbol }}{% if p.price_quality == 'fx_fallback' %} <span class="flag" title="Marked through the USDINR fallback rate, not a live cross-rate">fx est.</span>{% endif %}</td>
         <td>{{ p.side }}</td>
         <td class="num">{{ p.qty }}</td>
         <td class="num">{{ p.avg_buy | inr }}</td>

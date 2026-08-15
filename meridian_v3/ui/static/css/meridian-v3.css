@@ -97,6 +97,14 @@ h1 { font-size: 26px; font-weight: 400; margin: 0 0 8px; }
 .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .num.up, .figure.up { color: var(--up); }
 .num.down, .figure.down { color: var(--down); }
+/* 2.A.4 — a settled clip whose tape barely moved is a fee-only scratch, not
+   a directional loss; give it its own muted tone instead of reading "down"
+   like a real loss. */
+.num.scratch, .figure.scratch { color: var(--mist); }
+/* 2.A.3 — small inline data-quality badge (fx-fallback mark, corrected fill,
+   unreconciled position). Dotted underline + muted color, matching the
+   existing .meta/.note treatment rather than inventing a new visual language. */
+.flag { border-bottom: 1px dotted var(--ash); color: var(--mist); font-size: 10px; letter-spacing: 0.04em; cursor: help; white-space: nowrap; }
 
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th { text-align: left; font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ash); font-weight: 500; padding: 6px 8px; border-bottom: 1px solid var(--line); }

@@ -13,6 +13,7 @@ from sqlalchemy import func, select
 from meridian_v3.config import get_settings
 from meridian_v3.domain.money import format_inr, format_pct
 from meridian_v3.engine.drawdown import assess_drawdown
+from meridian_v3.execution.brokers.plugin import get_live_broker
 from meridian_v3.ingestion.service import ImportService
 from meridian_v3.autopilot import is_running, last_error, set_paper_auto, tick
 from meridian_v3.charges.indian import BROKER_LABELS, BROKERS, broker_label, normalize_broker
@@ -145,6 +146,13 @@ def book(request: Request):
     )
     paper_open = [p for p in paper if p["status"] == "open"]
     paper_done = [p for p in paper if p["status"] == "closed"]
+    # 2.A.3 — a repaired closed clip with no matching exit fill is flagged
+    # `status="unreconciled"` (storage/repair.py) instead of being rewritten
+    # against today's mark. That status matches neither `open` nor `closed`
+    # above, so without this the row simply vanished from the Book page.
+    # Surface it in its own table instead — its exit_price/realized_pnl are
+    # None/unreliable, so it stays out of the normal settled P&L columns.
+    paper_unreconciled = [p for p in paper if p["status"] == "unreconciled"]
     live_open = [p for p in live if p["status"] == "open"]
     live_done = [p for p in live if p["status"] == "closed"]
     all_fills = list(session.scalars(select(Fill).order_by(Fill.filled_at.desc())))
@@ -154,6 +162,7 @@ def book(request: Request):
         "book",
         paper_pos=paper_open,
         paper_done=paper_done,
+        paper_unreconciled=paper_unreconciled,
         paper_settled=summarize_closed(paper_done),
         live_pos=live_open,
         live_done=live_done,
@@ -229,6 +238,12 @@ def safety_page(request: Request):
     live_dd = assess_drawdown(live.equity, live.peak) if live else None
     paper_dd = assess_drawdown(paper.equity, paper.peak) if paper else None
     broker = _account_broker(session)
+    # 2.A.2 — "Arm live" and "is a broker actually plugged in" used to be two
+    # facts the user couldn't see together. Compute the adapter fact here,
+    # server-side, from the same registry the OMS itself consults
+    # (execution/brokers/plugin.py:get_live_broker) — never guessed in the
+    # template or in JS.
+    live_broker = get_live_broker()
     return _render(
         request,
         "safety.html",
@@ -238,6 +253,7 @@ def safety_page(request: Request):
         broker=broker,
         broker_label=broker_label(broker),
         brokers=[{"id": name, "label": BROKER_LABELS[name]} for name in BROKERS],
+        live_broker_name=live_broker.name if live_broker else None,
     )
 
 
