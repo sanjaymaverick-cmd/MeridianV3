@@ -6,9 +6,14 @@ from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from meridian_v3.alerts.notify import emit_alert
 from meridian_v3.capital.sizer import stop_price
 from meridian_v3.config import get_settings
 from meridian_v3.storage.schema import AccountState, Fill, Position, PriceCache
+
+# Part 3 item 6 — a repair fixing 1-3 rows on a normal boot isn't
+# alert-worthy; a repair fixing dozens is worth flagging to the operator.
+_LARGE_REPAIR_ALERT_THRESHOLD = 3
 
 
 def repair_margin_priced_clips(session: Session) -> int:
@@ -23,6 +28,8 @@ def repair_margin_priced_clips(session: Session) -> int:
     # clean boot (fixed == 0, the common case) stays quiet.
     if fixed:
         logger.info("repair_margin_priced_clips: fixed {} row(s)", fixed)
+    if fixed > _LARGE_REPAIR_ALERT_THRESHOLD:
+        emit_alert(session, "large_repair_run", f"Repair changed {fixed} row(s) — check the book.")
     return fixed
 
 

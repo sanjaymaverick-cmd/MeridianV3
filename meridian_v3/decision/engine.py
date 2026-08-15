@@ -45,6 +45,12 @@ class DecisionInput:
     live_armed: bool
     live_today: int
     open_count: int
+    # Part 3 item 3 — rupee-per-day kill switch. "Loss so far today" for the
+    # venue this decision is being scored against (paper or live, mirroring
+    # how `drawdown` is already selected per-venue in pipeline.run_cycle).
+    # 0.0 means "nothing lost yet today" — the safe default for callers that
+    # don't compute this (e.g. existing tests).
+    daily_loss_inr: float = 0.0
     # 1.3 — routing is suffix/asset-class dispatch (router/markets.py:market_for),
     # always decided up front and passed in here as `preferred_market`. The
     # router used to also accept competing per-market scores, but the live
@@ -173,9 +179,19 @@ def decide(inp: DecisionInput, settings: Settings | None = None) -> AutoDecision
         market=route.market,
         horizon=size.horizon,
         now=now,
+        daily_loss_inr=inp.daily_loss_inr,
     )
 
-    paper = settings.decision.paper_all_signals and action != "hold" and not size.blocked
+    # `safety` is computed above this line, so `safety.allow_paper` (which
+    # the daily-loss kill switch can now set False) is enforced here rather
+    # than being computed and silently discarded (it previously was — see
+    # Part 3 item 3 of the fix plan).
+    paper = (
+        settings.decision.paper_all_signals
+        and action != "hold"
+        and not size.blocked
+        and safety.allow_paper
+    )
     live = (
         paper
         and safety.allow_live

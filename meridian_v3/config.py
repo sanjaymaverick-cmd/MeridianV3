@@ -134,6 +134,12 @@ class SafetyCfg(BaseModel):
     drawdown_scale_start_pct: float = 0.08
     max_daily_live_trades: int = 3
     max_daily_live_high_conf: int = 6
+    # Part 3 item 3 — kill switch. An absolute rupee-per-day circuit breaker,
+    # on top of the drawdown-percentage pause. Applies to paper too, not just
+    # live: paper is exactly where "the desk is bleeding fast today" should
+    # be caught early. docs/10-phases.md names this Phase 3 feature at this
+    # default ("₹2,000 default suggestion").
+    max_daily_loss_inr: float = 2000.0
     overnight_equity_ok: bool = True
     overnight_options_forbidden: bool = True
     overnight_fx_forbidden: bool = True
@@ -204,6 +210,11 @@ class AlertsCfg(BaseModel):
     snooze_hours: int = 24
     auto_start: bool = True
     price_every_cycles: int = 5
+    # Part 3 item 6 — optional outbound webhook for operator alerts (drawdown
+    # pause, live arm/disarm, worker death, large repair runs). Unset by
+    # default: alerting works with zero external config (log line + DeskEvent
+    # row); a webhook is an opt-in extra for whoever configures one.
+    webhook_url: str | None = None
 
 
 class ProvidersCfg(BaseModel):

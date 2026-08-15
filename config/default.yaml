@@ -103,6 +103,7 @@ safety:
   drawdown_scale_start_pct: 0.08
   max_daily_live_trades: 3
   max_daily_live_high_conf: 6
+  max_daily_loss_inr: 2000
   overnight_equity_ok: true
   overnight_options_forbidden: true
   overnight_fx_forbidden: true

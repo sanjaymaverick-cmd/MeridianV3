@@ -25,6 +25,11 @@ class AccountState(Base):
     last_cycle_note: Mapped[str] = mapped_column(Text, default="")
     broker: Mapped[str] = mapped_column(String(24), default="zerodha")
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    # Part 3 item 6 — edge-detection flag so the drawdown-pause alert fires
+    # once per pause episode instead of every cycle while still paused.
+    # Set True the first cycle `assess_drawdown().live_paused` is True for
+    # this venue; reset False once it recovers, so a later pause alerts again.
+    live_pause_alerted: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class EquityPoint(Base):

@@ -10,6 +10,7 @@ from fastapi.templating import Jinja2Templates
 from loguru import logger
 from sqlalchemy import func, select
 
+from meridian_v3.alerts.notify import emit_alert
 from meridian_v3.config import get_settings
 from meridian_v3.domain.money import format_inr, format_pct
 from meridian_v3.engine.drawdown import assess_drawdown
@@ -428,10 +429,15 @@ def desk_arm(request: Request, on: str = Form("0")):
     if live:
         live.live_armed = 1 if on == "1" else 0
         live.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
-        session.commit()
         # 2.6 — arming live moves real money once a broker is registered;
         # a toggle this consequential belongs in the log, not just the DB.
         logger.info("live arm toggled: live_armed={}", bool(live.live_armed))
+        emit_alert(
+            session,
+            "live_arm_toggled",
+            f"Live trading {'ARMED' if live.live_armed else 'DISARMED'} from the desk UI.",
+        )
+        session.commit()
     return RedirectResponse("/safety", status_code=303)
 
 

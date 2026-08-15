@@ -55,6 +55,8 @@ def _migrate(engine) -> None:
         "last_cycle_at": "DATETIME",
         "last_cycle_note": "TEXT DEFAULT ''",
         "broker": "VARCHAR(24) DEFAULT 'zerodha'",
+        # Part 3 item 6 — drawdown-pause alert edge-detection flag.
+        "live_pause_alerted": "INTEGER DEFAULT 0",
     }
     with engine.begin() as conn:
         rows = conn.execute(text("PRAGMA table_info(account_state)")).fetchall()

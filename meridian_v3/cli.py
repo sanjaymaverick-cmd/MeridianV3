@@ -215,6 +215,7 @@ def _arm(*, on: bool) -> int:
 
     from sqlalchemy import select
 
+    from meridian_v3.alerts.notify import emit_alert
     from meridian_v3.storage.schema import AccountState
 
     session = get_session()
@@ -225,8 +226,13 @@ def _arm(*, on: bool) -> int:
             return 1
         live.live_armed = 1 if on else 0
         live.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
-        session.commit()
         logger.info("live arm toggled: live_armed={}", bool(live.live_armed))
+        emit_alert(
+            session,
+            "live_arm_toggled",
+            f"Live trading {'ARMED' if live.live_armed else 'DISARMED'} from the CLI.",
+        )
+        session.commit()
         print("live ARMED" if on else "live DISARMED — paper still runs")
         return 0
     finally:

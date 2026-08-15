@@ -20,10 +20,12 @@ import threading
 import time
 from datetime import datetime, timezone
 
+from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from meridian_v3.config import get_settings
+from meridian_v3.alerts.notify import emit_alert
 from meridian_v3.capital.sizer import stop_price
 from meridian_v3.engine.meta_label import primary_direction, rsi
 from meridian_v3.execution.brokers.paper_broker import PaperBroker
@@ -365,6 +367,16 @@ def _loop() -> None:
         except Exception as exc:  # noqa: BLE001 — worker must stay up
             session.rollback()
             _last_error = str(exc)
+            # Part 3 item 6 — the worker's whole point is staying alive, so
+            # alerting about its own failure must never become a second way
+            # for it to die: this gets its own try/except on top of
+            # emit_alert()'s internal webhook guard.
+            try:
+                emit_alert(session, "worker_error", f"Autopilot worker error: {exc}")
+                session.commit()
+            except Exception:  # noqa: BLE001 — alerting must never crash the worker
+                logger.exception("failed to emit worker_error alert")
+                session.rollback()
         finally:
             session.close()
         _stop.wait(max(15, settings.alerts.poll_seconds))

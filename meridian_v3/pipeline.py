@@ -8,6 +8,7 @@ from loguru import logger
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from meridian_v3.alerts.notify import emit_alert
 from meridian_v3.capital.sizer import size_position
 from meridian_v3.config import get_settings
 from meridian_v3.decision.engine import DecisionInput, decide
@@ -19,7 +20,7 @@ from meridian_v3.engine.edge import estimate_equity_costs
 from meridian_v3.engine.meta_label import OnlineLogit, primary_direction, rsi
 from meridian_v3.execution.brokers.paper_broker import PaperBroker
 from meridian_v3.execution.oms import OrderManager
-from meridian_v3.router.calendar import india_session, is_india_market
+from meridian_v3.router.calendar import IST, india_session, is_india_market
 from meridian_v3.router.markets import market_for
 from meridian_v3.scoring.composite import blend_weights, composite_score, factor_parts_from_tape, map_action
 from meridian_v3.signals.engines import evaluate_signals
@@ -202,6 +203,65 @@ def _reentry_blocked(
     )
 
 
+def _day_start_equity(session: Session, venue: str, now: datetime) -> float:
+    """Equity for ``venue`` at the start of the current IST trading day (Part 3 item 3).
+
+    Used to compute "loss so far today" for the rupee-per-day kill switch.
+    IST, not UTC midnight, is the day boundary — this is an India-hours desk
+    and the rest of the codebase (``router/calendar.py``) already reasons
+    about "today" the same way.
+
+    Three cases, in order:
+      1. Today (IST) already has an ``EquityPoint`` for this venue — use the
+         earliest one (the mark closest to today's open).
+      2. Today has none yet (e.g. first cycle of the day) — fall back to the
+         most recent ``EquityPoint`` strictly before today (yesterday's last
+         snapshot).
+      3. No history at all — fall back to the account's current equity, i.e.
+         "loss so far today" is 0 until there is something to compare against.
+    """
+    aware = now if now.tzinfo is not None else now.replace(tzinfo=timezone.utc)
+    local = aware.astimezone(IST)
+    ist_midnight = local.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_start_utc = ist_midnight.astimezone(timezone.utc).replace(tzinfo=None)
+
+    today_point = session.scalar(
+        select(EquityPoint)
+        .where(EquityPoint.venue == venue, EquityPoint.as_of >= day_start_utc)
+        .order_by(EquityPoint.as_of.asc())
+    )
+    if today_point is not None:
+        return float(today_point.equity)
+
+    prior_point = session.scalar(
+        select(EquityPoint)
+        .where(EquityPoint.venue == venue, EquityPoint.as_of < day_start_utc)
+        .order_by(EquityPoint.as_of.desc())
+    )
+    if prior_point is not None:
+        return float(prior_point.equity)
+
+    return float(_account(session, venue).equity)
+
+
+def alert_on_drawdown_transition(session: Session, acct: AccountState, dd) -> None:
+    """Part 3 item 6 — fire the drawdown-pause alert once per pause episode.
+
+    ``assess_drawdown()`` is a stateless pure function recomputed every
+    cycle, so telling "just entered pause" apart from "still paused from
+    last cycle" needs its own edge-detection: alert (and latch
+    ``live_pause_alerted``) the first cycle a venue enters pause, stay quiet
+    on every subsequent still-paused cycle, and reset the latch once the
+    venue recovers so a later pause alerts again instead of going silent
+    forever after the first episode.
+    """
+    if dd.live_paused and not acct.live_pause_alerted:
+        emit_alert(session, "drawdown_pause", f"{acct.venue} account: {dd.reason}")
+        acct.live_pause_alerted = 1
+    elif not dd.live_paused and acct.live_pause_alerted:
+        acct.live_pause_alerted = 0
+
+
 def mark_to_market(session: Session, venue: str = "paper") -> float:
     acct = _account(session, venue)
     open_pos = list(
@@ -237,6 +297,14 @@ def run_cycle(
     desk_mood = regime.desk if regime else "Elevated"
     paper_dd = assess_drawdown(paper_acct.equity, paper_acct.peak)
     live_dd = assess_drawdown(live_acct.equity, live_acct.peak)
+    alert_on_drawdown_transition(session, paper_acct, paper_dd)
+    alert_on_drawdown_transition(session, live_acct, live_dd)
+    # Part 3 item 3 — computed once per cycle, same as paper_dd/live_dd above,
+    # rather than threading a Session into safety/guards.py.
+    paper_day_start = _day_start_equity(session, "paper", now)
+    live_day_start = _day_start_equity(session, "live", now)
+    paper_daily_loss = max(0.0, paper_day_start - paper_acct.equity)
+    live_daily_loss = max(0.0, live_day_start - live_acct.equity)
 
     live_today = session.scalar(
         select(func.count(SignalRow.id)).where(SignalRow.live == 1, SignalRow.created_at >= now.replace(hour=0, minute=0))
@@ -338,6 +406,7 @@ def run_cycle(
                 equity=paper_acct.equity,
                 cash=paper_acct.cash,
                 drawdown=live_dd if armed else paper_dd,
+                daily_loss_inr=live_daily_loss if armed else paper_daily_loss,
                 live_armed=armed,
                 live_today=int(live_today),
                 open_count=int(open_paper),
