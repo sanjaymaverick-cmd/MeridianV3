@@ -100,14 +100,21 @@ def _apply_frame(
         return False
     session.query(PriceBar).filter(PriceBar.symbol == symbol).delete()
     for idx, row in hist.iterrows():
+        o, h, l, c = float(row["Open"]), float(row["High"]), float(row["Low"]), float(row["Close"])
+        # A provider can hand back a bar with a real Open/High/Low but a NaN
+        # Close (a genuine, if rare, upstream data gap) — price_bars.close is
+        # NOT NULL, so skip the bar rather than crash the whole refresh over
+        # one bad row. The cache stats below already filter NaN the same way.
+        if o != o or h != h or l != l or c != c:
+            continue
         session.add(
             PriceBar(
                 symbol=symbol,
                 bar_date=idx.date() if hasattr(idx, "date") else idx,
-                open=float(row["Open"]),
-                high=float(row["High"]),
-                low=float(row["Low"]),
-                close=float(row["Close"]),
+                open=o,
+                high=h,
+                low=l,
+                close=c,
                 volume=float(row["Volume"]) if "Volume" in hist.columns else 0.0,
             )
         )
