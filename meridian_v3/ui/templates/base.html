@@ -11,7 +11,7 @@
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <script src="/static/vendor/lightweight-charts.js"></script>
 </head>
-<body class="{{ theme }}">
+<body class="{{ theme }}" data-auto-on="{{ 'true' if auto_on else 'false' }}">
   <header class="mast">
     <a class="brand" href="/">
       <svg class="mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -35,9 +35,9 @@
     </nav>
     <div class="mast-meta">
       <span class="regime {{ regime.tone }}"><span class="dot"></span>{{ regime.label }}</span>
-      <span class="badge">ACK {{ pending_count }}</span>
-      <span class="badge {{ 'live' if live and live.live_armed else '' }}">{{ 'LIVE ARMED' if live and live.live_armed else 'PAPER' }}</span>
-      <span class="badge">AUTO {{ 'ON' if auto_on else 'OFF' }}</span>
+      <span class="badge" id="badge-ack">ACK {{ pending_count }}</span>
+      <span class="badge {{ 'live' if live and live.live_armed else '' }}" id="badge-live-armed">{{ 'LIVE ARMED' if live and live.live_armed else 'PAPER' }}</span>
+      <span class="badge" id="badge-auto">AUTO {{ 'ON' if auto_on else 'OFF' }}</span>
       <span class="num">{{ now.strftime('%d %b %Y  %H:%M') }}</span>
       <button class="btn" type="button" data-theme-toggle>Light</button>
     </div>
@@ -70,9 +70,11 @@
       </div>
     </aside>
     <main class="stage">
+      <div id="notice-slot">
       {% if notice %}
       <p class="notice" role="status">{{ notice }}</p>
       {% endif %}
+      </div>
       {% block stage %}{% endblock %}
     </main>
   </div>

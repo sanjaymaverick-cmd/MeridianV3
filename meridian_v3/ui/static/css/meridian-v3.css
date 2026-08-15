@@ -114,11 +114,21 @@ tr.bad td { color: var(--down); }
 
 .btn { padding: 6px 12px; background: var(--panel-2); }
 .btn.primary { border-color: var(--gold); color: var(--gold); }
+.btn:disabled, .btn[disabled] { opacity: 0.6; cursor: progress; }
 .inline { display: flex; gap: 8px; align-items: end; flex-wrap: wrap; }
 .stack { display: grid; gap: 10px; max-width: 480px; }
 label { display: grid; gap: 4px; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ash); }
 input { padding: 6px 8px; }
-.chart-box { height: 420px; background: var(--panel); border: 1px solid var(--line); }
+.chart-box { position: relative; height: 420px; background: var(--panel); border: 1px solid var(--line); }
+/* 2.B.7 — .chart-box starts completely empty while mountChart() awaits its
+   fetch; give it an immediate placeholder instead of a blank panel. Removed
+   once the chart mounts, or repurposed to show a failure message. */
+.chart-box .skeleton-state {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  padding: var(--space-5); text-align: center; color: var(--ash); font-size: 12px;
+  letter-spacing: 0.08em; text-transform: uppercase; animation: chart-pulse 1.6s ease-in-out infinite;
+}
+@keyframes chart-pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 0.9; } }
 .chart-tip { position: absolute; z-index: 3; padding: 6px 8px; font-size: 11px; border: 1px solid var(--line); display: grid; gap: 2px; }
 .review-card { border-top: 1px solid var(--line); padding: 10px 0; }
 .plain { color: var(--mist); padding-left: 18px; }
