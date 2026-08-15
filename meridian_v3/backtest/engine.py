@@ -24,8 +24,9 @@ from __future__ import annotations
 
 import os
 import tempfile
+import uuid
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -133,7 +134,12 @@ def run_backtest(
     original_test_db = os.environ.get("MERIDIAN_V3_TEST_DB")
     tmp_dir = Path(tempfile.gettempdir()) / "meridian_v3_backtests"
     tmp_dir.mkdir(parents=True, exist_ok=True)
-    db_path = tmp_dir / f"backtest_{datetime.now(timezone.utc):%Y%m%d_%H%M%S}.sqlite"
+    # A uuid suffix, not just a timestamp: two backtests starting within the
+    # same second (sequential fast runs, or parallel pytest workers) would
+    # otherwise collide on one file and the second would fail seeding
+    # account_state against a DB that already has it. CI caught this as a
+    # flaky failure -- one runner hit the same-second case, another didn't.
+    db_path = tmp_dir / f"backtest_{datetime.now(timezone.utc):%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:8]}.sqlite"
     try:
         os.environ["MERIDIAN_V3_TEST_DB"] = str(db_path)
         reset_settings_cache()
