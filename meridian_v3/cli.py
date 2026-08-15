@@ -8,7 +8,10 @@ import webbrowser
 
 import uvicorn
 
+from loguru import logger
+
 from meridian_v3.config import get_settings
+from meridian_v3.logging import setup_logging
 from meridian_v3.storage.db import get_session, init_db
 from meridian_v3.storage.seed import seed_demo
 
@@ -20,7 +23,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     sub = parser.add_subparsers(dest="cmd")
     sub.add_parser("serve", help="Start the local V3 desk (default, port 8777)")
-    seed = sub.add_parser("seed", help="Load the demonstration ₹5,000 book if empty")
+    seed = sub.add_parser("seed", help="Load the demonstration ₹50,000 book if empty")
     seed.add_argument("--reset", action="store_true")
     sub.add_parser("cycle", help="Run one signal → paper (maybe live) cycle")
     prices = sub.add_parser("prices", help="Refresh marks from free sources")
@@ -44,7 +47,11 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("desktop", help="Open MERIDIAN V3 in a native window")
     args = parser.parse_args(argv)
 
+    # 2.6 — same as app.py: turn the log file on before anything else runs
+    # so a CLI-triggered boot repair failure leaves a trail.
+    setup_logging()
     init_db()
+    logger.info("CLI command: {}", args.cmd or "serve")
 
     if args.cmd == "seed":
         return _seed(reset=args.reset)
@@ -204,6 +211,7 @@ def _arm(*, on: bool) -> int:
         live.live_armed = 1 if on else 0
         live.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         session.commit()
+        logger.info("live arm toggled: live_armed={}", bool(live.live_armed))
         print("live ARMED" if on else "live DISARMED — paper still runs")
         return 0
     finally:

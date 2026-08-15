@@ -77,6 +77,7 @@ markets:
     micro_lots: true
     standard_lots_forbidden: true
     min_lot: 0.01
+    standard_lot_qty: 1.0
 
 sizing:
   kelly_fraction: 0.15
@@ -95,6 +96,7 @@ sizing:
   max_concurrent_high: 20
   max_position_pct: 0.18
   cash_reserve_pct: 0.10
+  stop_distance_ratio_ceiling: 0.45
 
 safety:
   drawdown_pause_pct: 0.20
@@ -124,6 +126,8 @@ decision:
   freshness_half_life_hours: 6
   min_freshness: 0.35
   walkforward_oos_gap_max: 0.35
+  reentry_cooldown_sec: 300
+  reentry_confidence_margin: 0.05
 
 regime:
   vix_calm_max: 14.0

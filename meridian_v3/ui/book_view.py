@@ -64,6 +64,7 @@ def decorate_fills(rows: list[Fill]) -> list[dict]:
                 "qty": fill.qty,
                 "price": fill.price,
                 "note": fill.note,
+                "correction_note": fill.correction_note,
                 "broker": raw.get("broker", ""),
                 "brokerage": float(raw.get("brokerage") or 0),
                 "gst": float(raw.get("gst") or 0),

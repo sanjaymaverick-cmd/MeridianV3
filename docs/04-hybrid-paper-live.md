@@ -13,7 +13,7 @@ Two `account_state` rows: `paper` and `live`. Two equity curves. They never shar
 
 ## Brokers
 
-- `PaperBroker` — always on, in-process, starts at ₹5,000.
+- `PaperBroker` — always on, in-process, starts at ₹50,000.
 - `PluginBroker` — empty slot. Register a real adapter with `register_broker(...)`.
 - No Kite / SmartAPI / SmartConnect code is bundled. That is how the desk stays broker-agnostic.
 

@@ -40,7 +40,7 @@ meridian_v3/
   engine/          proprietary math (Kelly, ATR, meta-label, Bayesian,
                    confluence, freshness, walk-forward, edge filter)
   decision/        Auto Decision Engine
-  capital/         ₹5,000-aware position sizing
+  capital/         ₹50,000-aware position sizing
   router/          suffix/asset-class market dispatch + per-market clocks
                    (India 09:15–15:30 IST, crypto 24/7, FX 24/5, CME/ICE) —
                    a symbol's suffix (.F/.C/.X/USDT/FX pair) or asset class
@@ -64,7 +64,7 @@ meridian_v3/
 1. Tape and imported holdings sit in SQLite.
 2. V1-style factors + V2 signal families produce a primary direction.
 3. V3 confluence, freshness, meta-label, Bayesian blend, and cost filter decide Hold / Buy / Sell.
-4. The sizer turns confidence into a share/lot count the ₹5,000 book can actually hold.
+4. The sizer turns confidence into a share/lot count the ₹50,000 book can actually hold.
 5. Safety checks: drawdown, daily live cap, session, overnight, options-buying-only.
 6. Every accepted clip is paper-traded.
 7. The same clip is cloned to live only if live is armed, confidence is very high, and a broker adapter is registered.

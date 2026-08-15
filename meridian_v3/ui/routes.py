@@ -7,6 +7,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from loguru import logger
 from sqlalchemy import func, select
 
 from meridian_v3.config import get_settings
@@ -257,9 +258,13 @@ def desk_cycle(request: Request):
             f"cash ₹{result.get('cash', 0):,.0f}. "
             "Already-held names are not bought again."
         )
+    # 2.7 — this used to hardcode "Live stays disarmed." regardless of the
+    # real live_armed state (F13). Read it from what run_cycle actually
+    # returned instead of asserting a fixed string.
+    live_line = "Live is armed — clips can go live." if result.get("live_armed") else "Live stays disarmed."
     notice = (
         f"Cycle finished. Paper fills: {result['paper_opened']}. "
-        f"Hold: {result.get('holds', 0)}. Live stays disarmed.{extra}"
+        f"Hold: {result.get('holds', 0)}. {live_line}{extra}"
     )
     return RedirectResponse("/?notice=" + _q(notice), status_code=303)
 
@@ -308,6 +313,9 @@ def desk_arm(request: Request, on: str = Form("0")):
         live.live_armed = 1 if on == "1" else 0
         live.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         session.commit()
+        # 2.6 — arming live moves real money once a broker is registered;
+        # a toggle this consequential belongs in the log, not just the DB.
+        logger.info("live arm toggled: live_armed={}", bool(live.live_armed))
     return RedirectResponse("/safety", status_code=303)
 
 

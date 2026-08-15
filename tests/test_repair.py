@@ -82,12 +82,26 @@ def test_repairs_silver_short_booked_at_one_tenth(session):
     )
     session.flush()
 
+    entry_note_before = "PAPER FILL: SELL 0.04 SILVER.X near ₹622.87."
+    exit_note_before = "PAPER EXIT: Stop hit.  P&L ₹-224 after fees ₹0.09."
+
     assert repair_shifted_clips(session) == 1
     pos = session.query(Position).one()
     assert pos.avg_price == pytest.approx(6228.7, abs=1.0)
     assert abs(pos.realized_pnl) < 1.0
     entry = session.query(Fill).filter_by(side="sell").one()
     assert entry.price == pytest.approx(6228.7, abs=1.0)
+
+    # 2.4 — the repair corrected the price and PnL, but `note` (the journal
+    # ticket written the moment the fill happened) is never rewritten. What
+    # changed is recorded separately in `correction_note`.
+    exit_fill = session.query(Fill).filter_by(side="buy").one()
+    assert entry.note == entry_note_before
+    assert exit_fill.note == exit_note_before
+    assert "622.87" in entry.correction_note
+    assert "6,228.70" in entry.correction_note
+    assert "P&L" in exit_fill.correction_note
+
     assert repair_shifted_clips(session) == 0
 
 

@@ -191,6 +191,7 @@ def manage_exits(
             flatten=flatten,
             session=session,
             weekend_india=weekend_india,
+            settings=settings,
         )
         if not reason:
             continue
@@ -307,12 +308,13 @@ def _exit_reason(
     flatten: bool,
     session: Session,
     weekend_india: bool = False,
+    settings=None,
 ) -> str:
     if weekend_india:
         return INDIA_WEEKEND_FLATTEN
     if flatten and (pos.horizon == "intraday" or is_india_market(pos.market)):
         return "End of day — flattening the same-day paper clip."
-    line = stop_price(pos.side, pos.avg_price, pos.stop or 0.0)
+    line = stop_price(pos.side, pos.avg_price, pos.stop or 0.0, settings)
     if pos.side == "buy" and line and last <= line:
         return f"Stop hit at ₹{last:,.2f} (line was ₹{line:,.2f})."
     if pos.side == "sell" and line and last >= line:

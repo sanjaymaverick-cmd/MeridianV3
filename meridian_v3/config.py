@@ -50,6 +50,10 @@ class MarketSpec(BaseModel):
     micro_lots: bool = False
     standard_lots_forbidden: bool = False
     min_lot: float = 1.0
+    # 2.1 — the qty at which a "nano/micro only" market (forex_micro) starts
+    # being a standard lot. OMS._send rejects any order at or above this as
+    # a second line of defense behind the sizer, which never produces one.
+    standard_lot_qty: float = 1.0
     margin_pct: float = 0.12
     max_leverage: float = 2.0
     contract_size: float = 1.0
@@ -93,7 +97,11 @@ class MarketsCfg(BaseModel):
     )
     forex_micro: MarketSpec = Field(
         default_factory=lambda: MarketSpec(
-            nano_lots=True, micro_lots=True, standard_lots_forbidden=True, min_lot=0.01
+            nano_lots=True,
+            micro_lots=True,
+            standard_lots_forbidden=True,
+            min_lot=0.01,
+            standard_lot_qty=1.0,
         )
     )
 
@@ -115,6 +123,10 @@ class SizingCfg(BaseModel):
     max_concurrent_high: int = 20
     max_position_pct: float = 0.18
     cash_reserve_pct: float = 0.10
+    # 2.9 — stop_price() uses this to tell an ATR *distance* apart from an
+    # already-a-price-line stop: a distance bigger than this fraction of
+    # entry is treated as a level, not rupees of room. Was a bare 0.45.
+    stop_distance_ratio_ceiling: float = 0.45
 
 
 class SafetyCfg(BaseModel):
@@ -153,6 +165,11 @@ class DecisionCfg(BaseModel):
     freshness_half_life_hours: float = 6.0
     min_freshness: float = 0.35
     walkforward_oos_gap_max: float = 0.35
+    # 2.5 — minimum gap since a symbol's last paper close before it can be
+    # reopened, unless the new signal clears reentry_confidence_margin above
+    # the confidence that closed clip was opened on (F16).
+    reentry_cooldown_sec: int = 300
+    reentry_confidence_margin: float = 0.05
 
 
 class RegimeCfg(BaseModel):

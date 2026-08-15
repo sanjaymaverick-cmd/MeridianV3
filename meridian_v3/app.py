@@ -7,9 +7,12 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from loguru import logger
+
 from meridian_v3 import __version__
 from meridian_v3.api.routes import router as api_router
 from meridian_v3.config import get_settings
+from meridian_v3.logging import setup_logging
 from meridian_v3.storage.db import get_session, init_db
 from meridian_v3.ui.routes import router as ui_router
 
@@ -32,8 +35,13 @@ class SessionMiddleware(BaseHTTPMiddleware):
 
 
 def create_app() -> FastAPI:
+    # 2.6 — the log file that already had a writer (loguru, 5MB rotation,
+    # 14-day retention) but nothing ever called. Turn it on before touching
+    # the DB so a boot-repair failure in init_db() has somewhere to land.
+    setup_logging()
     init_db()
     settings = get_settings()
+    logger.info("MERIDIAN V3 starting up (version {}).", __version__)
     app = FastAPI(
         title=settings.app.name,
         version=__version__,

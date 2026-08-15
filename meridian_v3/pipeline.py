@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from loguru import logger
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -162,6 +163,45 @@ def _score_symbol(
     return float(composite) if composite is not None else 6.5
 
 
+def _reentry_blocked(
+    session: Session, symbol: str, confidence: float, now: datetime, settings
+) -> str | None:
+    """2.5 — live enforcement of the re-entry cooldown (F16).
+
+    ``reentry_sec`` used to only exist as a post-hoc training feature in
+    ``build_meta_labels.py`` — nothing stopped the live cycle from reopening
+    the same symbol on back-to-back cycles once its last clip closed, paying
+    brokerage + GST again each time. This blocks that, unless the new
+    signal is materially more confident than the one that closed the last
+    clip (so a genuine regime change isn't stuck waiting out the clock).
+
+    Returns a hold reason string when re-entry should wait, or ``None`` when
+    it's fine to open (no recent close, cooldown has elapsed, or confidence
+    cleared the margin).
+    """
+    cooldown = settings.decision.reentry_cooldown_sec
+    if cooldown <= 0:
+        return None
+    last_closed = session.scalar(
+        select(Position)
+        .where(Position.venue == "paper", Position.symbol == symbol, Position.status == "closed")
+        .order_by(Position.closed_at.desc())
+    )
+    if last_closed is None or last_closed.closed_at is None:
+        return None
+    elapsed = (now - last_closed.closed_at).total_seconds()
+    if elapsed >= cooldown:
+        return None
+    prior_confidence = float(last_closed.opened_confidence or 0.0)
+    if confidence >= prior_confidence + settings.decision.reentry_confidence_margin:
+        return None
+    return (
+        f"{symbol} closed {elapsed:.0f}s ago — inside the {cooldown:.0f}s re-entry cooldown. "
+        f"Confidence {confidence:.0%} is not materially higher than the {prior_confidence:.0%} "
+        "that closed. Holding rather than paying fees to reopen it."
+    )
+
+
 def mark_to_market(session: Session, venue: str = "paper") -> float:
     acct = _account(session, venue)
     open_pos = list(
@@ -204,6 +244,10 @@ def run_cycle(
     open_paper = session.scalar(
         select(func.count(Position.id)).where(Position.venue == "paper", Position.status == "open")
     ) or 0
+
+    # 2.6 — the only record of what a cycle did used to be a DeskEvent row
+    # per symbol; nothing summarized it anywhere an operator could grep.
+    logger.info("run_cycle start: live_armed={} open_paper={}", armed, open_paper)
 
     broker = PaperBroker(cash=paper_acct.cash)
     oms = OrderManager(session, broker)
@@ -312,6 +356,14 @@ def run_cycle(
                 "Indian market is shut until Monday 09:15 IST. "
                 "No new India paper — cash stays free for crypto, FX, and commodities."
             )
+        if decision.paper and held is None:
+            # 2.5 — a symbol that just closed shouldn't reopen (and pay fees
+            # again) within its cooldown window unless this signal is
+            # materially more confident than the one that closed it (F16).
+            cooldown_reason = _reentry_blocked(session, item.symbol, decision.confidence, now, settings)
+            if cooldown_reason:
+                decision.paper = False
+                decision.reasons.append(cooldown_reason)
         session.add(
             SignalRow(
                 symbol=item.symbol,
@@ -381,6 +433,10 @@ def run_cycle(
     session.add(EquityPoint(venue="paper", as_of=now, equity=paper_acct.equity, cash=paper_acct.cash, peak=paper_acct.peak))
     session.add(EquityPoint(venue="live", as_of=now, equity=live_acct.equity, cash=live_acct.cash, peak=live_acct.peak))
     session.flush()
+    logger.info(
+        "run_cycle end: decided={} paper_opened={} holds={} skipped_no_tape={}",
+        decided, opened, holds, skipped_no_tape,
+    )
     return {
         "decided": decided,
         "paper_opened": opened,

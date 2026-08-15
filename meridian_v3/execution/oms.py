@@ -13,6 +13,7 @@ import json
 from datetime import datetime, timezone
 from uuid import uuid4
 
+from loguru import logger
 from sqlalchemy.orm import Session
 
 from meridian_v3.capital.sizer import stop_price
@@ -64,6 +65,43 @@ class OrderManager:
                     f"₹{last:,.2f}. Refusing a suspicious mark."
                 ),
             )
+
+        # 2.1 — second line of defense at the broker boundary. "Options buying
+        # only" and "no standard FX lots" are already enforced upstream in
+        # decision/engine.py's short_ok check and capital/sizer.py, but
+        # neither the OMS nor PaperBroker independently re-checks market
+        # rules — a future regression in the decision layer would sail
+        # straight through. Reject here too, on the same shape as the
+        # 0.2/0.3 guards: an Order row with status="rejected", no Fill.
+        if decision.action == "sell" and decision.market in ("options_buy", "crypto_options"):
+            held = (
+                self.session.query(Position)
+                .filter(
+                    Position.symbol == decision.symbol,
+                    Position.venue == venue,
+                    Position.status == "open",
+                )
+                .one_or_none()
+            )
+            if held is None or held.qty <= 1e-9:
+                return self._reject(
+                    cid, decision, venue, price=price, now=now,
+                    message=(
+                        f"{decision.market} is buying-only on this book. Refusing a sell "
+                        "with no open position to close."
+                    ),
+                )
+
+        if decision.market == "forex_micro":
+            ceiling = settings.markets.forex_micro.standard_lot_qty
+            if decision.size.qty >= ceiling:
+                return self._reject(
+                    cid, decision, venue, price=price, now=now,
+                    message=(
+                        f"forex_micro forbids standard lots. Order qty {decision.size.qty:g} "
+                        f"is at or above the {ceiling:g}-lot ceiling. Refusing."
+                    ),
+                )
 
         req = OrderRequest(
             client_id=cid,
@@ -121,7 +159,7 @@ class OrderManager:
                 + f" Fees ₹{bill.total:,.2f} (brokerage ₹{bill.brokerage:,.2f} + GST ₹{bill.gst:,.2f}).",
             )
             self.session.add(fill)
-            self._upsert_position(decision, result.filled_qty, result.avg_price, venue)
+            self._upsert_position(decision, result.filled_qty, result.avg_price, venue, settings)
             self._touch_account(venue, result)
         self.session.flush()
         return {
@@ -154,6 +192,12 @@ class OrderManager:
         )
         self.session.add(order)
         self.session.flush()
+        # 2.6 — a rejected order (0.2/0.3/2.1 guards) is exactly the kind of
+        # thing an operator wants in the log, not just a DB row nobody reads.
+        logger.warning(
+            "order rejected: {} {} {} {} — {}",
+            venue, decision.action, decision.symbol, decision.market, message,
+        )
         return {
             "ok": False,
             "status": "rejected",
@@ -165,7 +209,9 @@ class OrderManager:
             "gst": 0.0,
         }
 
-    def _upsert_position(self, decision: AutoDecision, qty: float, price: float, venue: str) -> None:
+    def _upsert_position(
+        self, decision: AutoDecision, qty: float, price: float, venue: str, settings=None
+    ) -> None:
         row = (
             self.session.query(Position)
             .filter(Position.symbol == decision.symbol, Position.venue == venue, Position.status == "open")
@@ -185,12 +231,16 @@ class OrderManager:
                     side=decision.action,
                     qty=qty,
                     avg_price=price,
-                    stop=stop_price(decision.action, price, decision.size.stop),
+                    stop=stop_price(decision.action, price, decision.size.stop, settings),
                     horizon=decision.size.horizon,
                     status="open",
                     opened_at=datetime.now(timezone.utc).replace(tzinfo=None),
                     source="auto",
                     feature_json=json.dumps(features),
+                    # 2.5 — the confidence this clip opened on, so a later
+                    # re-entry cooldown check can tell a genuinely stronger
+                    # signal apart from the same near-miss ranking again.
+                    opened_confidence=float(getattr(decision, "confidence", 0.0) or 0.0),
                 )
             )
             return

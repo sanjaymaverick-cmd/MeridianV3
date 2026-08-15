@@ -25,7 +25,7 @@ The engine answers one question: **Buy, Sell, or Hold — and may this clip be p
 3. Meta-label `p ≥ 0.52` to even consider a clip.
 4. Freshness above the floor (default 0.35).
 5. Expected edge > estimated costs + safety margin.
-6. Sizer must fit the ₹5,000 book (at least one share, or skip).
+6. Sizer must fit the ₹50,000 book (at least one share, or skip).
 7. **Paper** if the above pass.
 8. **Live** only if paper passed **and** live is armed **and** confidence ≥ 0.82 **and** confluence ≥ 62 **and** drawdown < 20% **and** daily live cap not spent.
 

@@ -194,6 +194,11 @@ class Fill(Base):
     charges_json: Mapped[str] = mapped_column(Text, default="{}")
     filled_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     note: Mapped[str] = mapped_column(Text, default="")
+    # 2.4 — the fill journal is append-only. `note` is the original ticket
+    # text written the moment the fill happened and must never be rewritten
+    # after the fact, even to fix it. A later repair that corrects price or
+    # P&L records what changed and why here instead (F15).
+    correction_note: Mapped[str] = mapped_column(Text, default="")
 
 
 class Position(Base):
@@ -220,6 +225,12 @@ class Position(Base):
     # with, once we know whether the clip won. "{}" when unknown (e.g. a
     # manually-seeded row, or a position opened before this column existed).
     feature_json: Mapped[str] = mapped_column(Text, default="{}")
+    # 2.5 — the decision confidence this clip was opened on, so the live
+    # re-entry cooldown can tell "a materially more confident signal" apart
+    # from "the same near-miss ranking near the top again." 0.0 when unknown
+    # (a manually-seeded row, or a position opened before this column
+    # existed) — treated as "no bar to clear" by the cooldown check.
+    opened_confidence: Mapped[float] = mapped_column(Float, default=0.0)
 
 
 class BeliefRow(Base):
@@ -275,6 +286,24 @@ class RegimeState(Base):
     vol: Mapped[str] = mapped_column(String(16), default="low_vol")
     reason: Mapped[str] = mapped_column(Text, default="")
     as_of: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class SchemaVersion(Base):
+    """One row per one-time data migration that has actually run (2.3).
+
+    Replaces inferring migration state from data shape (e.g. "peak is still
+    near ₹5,000 so the ₹50,000 credit must not have run yet") — that kind of
+    heuristic both re-fires on data it shouldn't and skips data it should
+    touch. A migration name in this table, once written, means "never do
+    this again," full stop, independent of what the numbers happen to look
+    like on a later run.
+    """
+
+    __tablename__ = "schema_version"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    migration: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    migrated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
 class FxMark(Base):

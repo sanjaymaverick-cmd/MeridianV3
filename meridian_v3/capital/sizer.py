@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from meridian_v3.config import Settings
+from meridian_v3.config import Settings, get_settings
 from meridian_v3.engine.atr import atr_quantity
 from meridian_v3.engine.drawdown import DrawdownState
 from meridian_v3.engine.kelly import confidence_weighted_fractional_kelly
@@ -32,18 +32,24 @@ class SizePlan:
     blocked: bool
 
 
-def stop_price(side: str, entry: float, stop: float) -> float:
+def stop_price(side: str, entry: float, stop: float, settings: Settings | None = None) -> float:
     """Turn an ATR *distance* into a price line.
 
     ``SizePlan.stop`` is rupees of room (ATR × k), not a level. A silver
     short at ₹6,216 with ₹219 of room must stop at ₹6,435 — never treat
     ₹219 as the stop price or every tick looks like a stop-out.
+
+    The 0.45 boundary that used to be hardcoded here — "a distance this
+    large relative to entry is already a price line, not ATR room" — is
+    ``sizing.stop_distance_ratio_ceiling`` (2.9), so it's a config knob
+    rather than a magic number buried in this function.
     """
     dist = float(stop or 0.0)
     px = float(entry or 0.0)
     if dist <= 0 or px <= 0:
         return dist
-    if dist > px * 0.45:
+    settings = settings or get_settings()
+    if dist > px * settings.sizing.stop_distance_ratio_ceiling:
         return dist
     if side == "sell":
         return px + dist
