@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -42,6 +43,24 @@ def create_app() -> FastAPI:
     init_db()
     settings = get_settings()
     logger.info("MERIDIAN V3 starting up (version {}).", __version__)
+
+    # Item 7 (Part 3) — `register-dry-run-broker` alone cannot make the live
+    # path testable: it's a separate CLI invocation (a separate OS process)
+    # from `serve`, so registering there and exiting never reaches the
+    # process that actually runs the desk. This env var is the real opt-in:
+    # set it before launching `serve` (same process, same _REGISTRY) so
+    # `get_live_broker()` genuinely returns a DryRunBroker for that run.
+    # Unset by default — never registered automatically.
+    if os.environ.get("MERIDIAN_V3_DRY_RUN_BROKER"):
+        from meridian_v3.execution.brokers.dry_run import DryRunBroker
+        from meridian_v3.execution.brokers.plugin import register_broker
+
+        register_broker(DryRunBroker())
+        logger.warning(
+            "MERIDIAN_V3_DRY_RUN_BROKER is set — DryRunBroker registered as the live "
+            "broker adapter. This is NOT a real venue; live 'place' calls are logged "
+            "and synthetic. Unset this env var for a normal run."
+        )
     app = FastAPI(
         title=settings.app.name,
         version=__version__,

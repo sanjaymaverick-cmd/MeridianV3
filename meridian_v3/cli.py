@@ -45,6 +45,19 @@ def main(argv: list[str] | None = None) -> int:
         help="Rewrite 10x / margin-priced paper fills and recompute honest settled P&L",
     )
     sub.add_parser("desktop", help="Open MERIDIAN V3 in a native window")
+    sub.add_parser(
+        "register-dry-run-broker",
+        help=(
+            "TESTING ONLY: registers DryRunBroker and places one synthetic demo order in "
+            "THIS process, as a smoke test that the class itself works -- it exits "
+            "immediately afterward, so this alone does NOT reach a separately-running "
+            "`serve` process (different OS process, different registry). To actually "
+            "exercise the live order path (arm -> live decision -> OMS -> PluginBroker -> "
+            "broker) against a running desk, set MERIDIAN_V3_DRY_RUN_BROKER=1 before "
+            "launching `serve` instead -- see app.py:create_app(). Never registered "
+            "automatically either way."
+        ),
+    )
     args = parser.parse_args(argv)
 
     # 2.6 — same as app.py: turn the log file on before anything else runs
@@ -69,6 +82,8 @@ def main(argv: list[str] | None = None) -> int:
         return _repair_book()
     if args.cmd == "desktop":
         return _desktop()
+    if args.cmd == "register-dry-run-broker":
+        return _register_dry_run_broker()
     return _serve()
 
 
@@ -216,6 +231,50 @@ def _arm(*, on: bool) -> int:
         return 0
     finally:
         session.close()
+
+
+def _register_dry_run_broker() -> int:
+    """TESTING ONLY. Registers DryRunBroker and places one synthetic demo order
+    through it in THIS process, as a smoke test that the class itself works.
+
+    This process exits right after, so registration here never reaches a
+    separately-launched `serve` process (a different OS process has its own
+    empty broker registry). To actually exercise the live order path against
+    a running desk, set MERIDIAN_V3_DRY_RUN_BROKER=1 before `serve` instead
+    (see app.py:create_app()) -- that registers in the same process that
+    then serves. Never registered automatically either way.
+    """
+    from datetime import datetime, timezone
+
+    from meridian_v3.execution.brokers.base import OrderRequest
+    from meridian_v3.execution.brokers.dry_run import DryRunBroker
+    from meridian_v3.execution.brokers.plugin import register_broker
+
+    broker = DryRunBroker()
+    register_broker(broker)
+    logger.warning(
+        "DryRunBroker registered as the live broker adapter (this process only). "
+        "This is NOT a real venue -- 'place' calls are logged and synthetic, no "
+        "real money moves. Testing only."
+    )
+    demo = OrderRequest(
+        client_id=f"dry-run-smoke-{datetime.now(timezone.utc).timestamp():.0f}",
+        symbol="DEMO",
+        side="buy",
+        qty=1,
+        price=100.0,
+        market="equity_cash",
+        venue="live",
+    )
+    result = broker.place(demo)
+    print(
+        f"DryRunBroker registered and smoke-tested: place() returned ok={result.ok}, "
+        f"status={result.status!r} -- nothing was sent to a real venue.\n"
+        "This registration does not persist to a separately-launched `serve` process. "
+        "To exercise the live order path against a running desk, set "
+        "MERIDIAN_V3_DRY_RUN_BROKER=1 before launching `serve` instead."
+    )
+    return 0
 
 
 def _serve(*, open_browser: bool | None = None, log_level: str = "info") -> int:
