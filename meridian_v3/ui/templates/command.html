@@ -63,6 +63,12 @@
   </article>
 </div>
 
+<article class="panel" id="panel-equity-curve">
+  <h2>Paper equity vs. peak</h2>
+  <div class="chart-box chart-box-sm" data-equity-curve data-height="220"></div>
+  <p class="meta">Gold = equity. Dashed line = running peak. Shaded gap = drawdown from peak — the fastest "is the book okay" glance on this page.</p>
+</article>
+
 <article class="panel" id="panel-open-clips">
   <h2>Open clips</h2>
   <table>
@@ -94,7 +100,7 @@
     <tbody>
     {% for s in signals %}
       <tr>
-        <td><a href="/chart?symbol={{ s.symbol }}">{{ s.symbol }}</a></td>
+        <td><a href="/chart?symbol={{ s.symbol }}" title="{{ s.reason }}">{{ s.symbol }}</a></td>
         <td>{{ s.side }}</td>
         <td class="num">{{ '%.0f'|format(s.confidence * 100) }}</td>
         <td class="num">{{ '%.0f'|format(s.confluence) }}</td>

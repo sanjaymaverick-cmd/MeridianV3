@@ -18,6 +18,7 @@
       up: "#4A9B7F",
       down: "#C46B6B",
       gold: "#C4A35A",
+      mist: light ? "#5c564b" : "#9aa3b2",
       tipBg: light ? "rgba(247,242,232,0.96)" : "rgba(14,19,27,0.94)",
       tipBorder: light ? "#d9d0c0" : "#1c2433",
     };
@@ -177,6 +178,109 @@
     charts.push({ redraw: () => mountChart(el) });
   };
 
+  // 2.C.8 — paint the drawdown gap (peak minus equity) as a filled polygon
+  // between the two line series, reusing the same overlay-canvas mechanism
+  // paintOverlays already uses for windows/zones on the price chart, rather
+  // than inventing a second drawing pathway.
+  const paintDrawdownBand = (el, chart, equitySeries, peakSeries, rows) => {
+    const canvas = ensureOverlay(el);
+    const dpr = window.devicePixelRatio || 1;
+    const width = el.clientWidth;
+    const height = el.clientHeight;
+    canvas.width = Math.max(1, Math.floor(width * dpr));
+    canvas.height = Math.max(1, Math.floor(height * dpr));
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+    const ts = chart.timeScale();
+    const pts = [];
+    rows.forEach((r) => {
+      const x = ts.timeToCoordinate(r.t);
+      const yE = equitySeries.priceToCoordinate(r.equity);
+      const yP = peakSeries.priceToCoordinate(r.peak);
+      if (x == null || yE == null || yP == null) return;
+      pts.push({ x, yE, yP });
+    });
+    if (pts.length < 2) return;
+    ctx.fillStyle = "rgba(196,107,107,0.14)";
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].yE);
+    pts.forEach((p) => ctx.lineTo(p.x, p.yE));
+    for (let i = pts.length - 1; i >= 0; i -= 1) ctx.lineTo(pts[i].x, pts[i].yP);
+    ctx.closePath();
+    ctx.fill();
+  };
+
+  // 2.C.8 — small equity-vs-peak line chart for the Command page ("is the
+  // book okay at a glance"), parallel to mountChart but against /api/equity
+  // instead of /api/chart/<symbol>, and against .chart-box's existing
+  // loading/failure skeleton convention (setChartMessage) rather than a new
+  // one. Rebuilds the chart on every call (including refresh-poll remounts)
+  // since equity history changes every cycle; mirrors mountChart's
+  // first-mount-vs-redraw distinction so a transient fetch failure during a
+  // poll doesn't blank out an already-good chart.
+  const mountEquityCurve = async (el) => {
+    if (!el) return;
+    const isFirstMount = !el._eqChart;
+    if (!window.LightweightCharts) {
+      if (isFirstMount) setChartMessage(el, "Chart library did not load. Reload the page.");
+      return;
+    }
+    if (isFirstMount) setChartMessage(el, "Loading equity curve…");
+    let res;
+    try {
+      res = await fetch("/api/equity");
+    } catch (err) {
+      if (isFirstMount) setChartMessage(el, "Couldn't load equity history. Check your connection and reload.");
+      else console.warn("equity curve redraw failed, keeping the existing chart", err);
+      return;
+    }
+    if (!res.ok) {
+      if (isFirstMount) setChartMessage(el, "Couldn't load equity history yet.");
+      else console.warn(`equity curve redraw failed with ${res.status}, keeping the existing chart`);
+      return;
+    }
+    const data = await res.json();
+    const points = data.paper || [];
+    if (!points.length) {
+      setChartMessage(el, "No paper equity history yet. Run a cycle to start one.");
+      if (el._eqChart) { el._eqChart.remove(); el._eqChart = null; }
+      return;
+    }
+    const skeleton = el.querySelector(".skeleton-state");
+    if (skeleton) skeleton.remove();
+    const colors = palette();
+    if (el._eqChart) {
+      el._eqChart.remove();
+      el._eqChart = null;
+    }
+    const chart = LightweightCharts.createChart(el, {
+      width: el.clientWidth,
+      height: Number(el.dataset.height || 220),
+      layout: { background: { color: colors.bg }, textColor: colors.text, fontFamily: "IBM Plex Sans, Segoe UI, sans-serif", fontSize: 12 },
+      grid: { vertLines: { color: colors.grid }, horzLines: { color: colors.grid } },
+      rightPriceScale: { borderColor: colors.grid },
+      timeScale: { borderColor: colors.grid, rightOffset: 4 },
+      crosshair: { mode: 0 },
+    });
+    const rows = points
+      .map((p) => ({ t: Math.floor(new Date(p.time).getTime() / 1000), equity: p.equity, peak: p.peak }))
+      .sort((a, b) => a.t - b.t);
+    const equitySeries = chart.addLineSeries({ color: colors.gold, lineWidth: 2 });
+    equitySeries.setData(rows.map((r) => ({ time: r.t, value: r.equity })));
+    const peakSeries = chart.addLineSeries({
+      color: colors.mist, lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false,
+    });
+    peakSeries.setData(rows.map((r) => ({ time: r.t, value: r.peak })));
+    const draw = () => paintDrawdownBand(el, chart, equitySeries, peakSeries, rows);
+    chart.timeScale().subscribeVisibleLogicalRangeChange(draw);
+    requestAnimationFrame(draw);
+    el._eqChart = chart;
+    charts.push({ redraw: () => mountEquityCurve(el) });
+  };
+
   // 2.B.7 — #review-root already ships with "Loading the review…" as its
   // initial server-rendered text (review.html), so — unlike .chart-box —
   // this one is not actually blank while awaiting fetch; that existing text
@@ -229,6 +333,7 @@
     "panel-paper-auto",
     "panel-paper-book",
     "panel-live-book",
+    "panel-equity-curve",
     "panel-open-clips",
     "panel-latest-decisions",
     "panel-charges",
@@ -252,6 +357,16 @@
       document.body.dataset.autoOn = doc.body.dataset.autoOn === "true" ? "true" : "false";
     }
     PATCH_IDS.forEach((id) => swapById(doc, id));
+    // panel-equity-curve was just swapped in as plain unmounted markup (a
+    // fresh <div data-equity-curve> with no chart on it yet) — remount it,
+    // same as every other patched panel is already "live" the moment its
+    // HTML lands, it just doesn't need JS to become so.
+    document.querySelectorAll("[data-equity-curve]").forEach(mountEquityCurve);
+    // Swapped-in panels (Fills, settled trades) carry fresh <table
+    // data-sortable> markup with no sort/filter wiring yet — same
+    // "just-landed HTML isn't live until JS says so" gap as the equity
+    // chart above.
+    enhanceTables();
   };
 
   // 2.B.6 — poll Command ("/") and Book ("/book") on a short interval while
@@ -376,6 +491,99 @@
     });
   };
 
+  // 2.C.10 — dependency-free, opt-in (`data-sortable`) table enhancer:
+  // click a <th> to sort by that column (toggle asc/desc), numeric-aware for
+  // any <td> carrying the existing `.num` class instead of naively
+  // string-sorting figures like "1,200" vs "300". A text filter input is
+  // inserted above the table and hides non-matching rows. Tables whose only
+  // rows are the Jinja `{% else %}` empty-state row (a lone <td colspan>)
+  // are left completely unenhanced so that message isn't sortable/filterable
+  // nonsense.
+  const parseSortCell = (td) => {
+    if (!td) return { text: "", num: null, isNum: false };
+    const text = td.textContent.trim();
+    const isNum = td.classList.contains("num");
+    if (!isNum) return { text, num: null, isNum: false };
+    const cleaned = text.replace(/[^0-9.\-]/g, "");
+    const num = cleaned === "" || cleaned === "-" ? null : parseFloat(cleaned);
+    return { text, num, isNum: true };
+  };
+
+  const dataRows = (table) => {
+    const tbody = table.tBodies[0];
+    if (!tbody) return [];
+    return Array.from(tbody.querySelectorAll("tr")).filter((tr) => !tr.querySelector("td[colspan]"));
+  };
+
+  const sortTableByColumn = (table, colIndex, dir) => {
+    const tbody = table.tBodies[0];
+    const rows = dataRows(table);
+    rows.sort((a, b) => {
+      const ca = parseSortCell(a.cells[colIndex]);
+      const cb = parseSortCell(b.cells[colIndex]);
+      let cmp;
+      if (ca.isNum || cb.isNum) {
+        const na = ca.num === null ? -Infinity : ca.num;
+        const nb = cb.num === null ? -Infinity : cb.num;
+        cmp = na - nb;
+      } else {
+        cmp = ca.text.localeCompare(cb.text);
+      }
+      return dir === "asc" ? cmp : -cmp;
+    });
+    rows.forEach((row) => tbody.appendChild(row));
+  };
+
+  const wireTableSort = (table) => {
+    const ths = Array.from(table.querySelectorAll("thead th"));
+    ths.forEach((th, idx) => {
+      th.addEventListener("click", () => {
+        const dir = th.dataset.sortDir === "asc" ? "desc" : "asc";
+        ths.forEach((other) => {
+          other.dataset.sortDir = "";
+          other.classList.remove("sorted-asc", "sorted-desc");
+        });
+        th.dataset.sortDir = dir;
+        th.classList.add(dir === "asc" ? "sorted-asc" : "sorted-desc");
+        sortTableByColumn(table, idx, dir);
+      });
+    });
+  };
+
+  const wireTableFilter = (table) => {
+    const input = document.createElement("input");
+    input.type = "search";
+    input.className = "table-filter";
+    input.placeholder = "Filter rows…";
+    input.setAttribute("aria-label", "Filter table rows");
+    // 2.C.10/12 fix — a table wrapped for horizontal scroll (.table-scroll,
+    // see item 12) would otherwise take the filter input along with it: on
+    // a narrow viewport, scrolling right to see later columns scrolled the
+    // filter itself out of view. Insert the filter before the *scroll
+    // wrapper* when present, so it stays pinned above the table regardless
+    // of how far the table itself is scrolled.
+    const host = table.closest(".table-scroll") || table;
+    host.parentNode.insertBefore(input, host);
+    input.addEventListener("input", () => {
+      const q = input.value.trim().toLowerCase();
+      dataRows(table).forEach((tr) => {
+        tr.style.display = !q || tr.textContent.toLowerCase().includes(q) ? "" : "none";
+      });
+    });
+  };
+
+  const enhanceTable = (table) => {
+    if (table.dataset.enhanced === "1") return;
+    if (dataRows(table).length === 0) return; // empty-state only — nothing to sort/filter
+    table.dataset.enhanced = "1";
+    wireTableFilter(table);
+    wireTableSort(table);
+  };
+
+  const enhanceTables = () => {
+    document.querySelectorAll("table[data-sortable]").forEach(enhanceTable);
+  };
+
   document.addEventListener("DOMContentLoaded", () => {
     applyStoredTheme();
     document.querySelectorAll("[data-theme-toggle]").forEach((btn) => {
@@ -386,8 +594,10 @@
       });
     });
     document.querySelectorAll(".chart-box").forEach(mountChart);
+    document.querySelectorAll("[data-equity-curve]").forEach(mountEquityCurve);
     document.querySelectorAll("#review-root").forEach(mountReview);
     wireArmConfirm();
     syncAutoRefresh();
+    enhanceTables();
   });
 })();

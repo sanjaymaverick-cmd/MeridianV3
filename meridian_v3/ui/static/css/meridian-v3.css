@@ -112,6 +112,31 @@ td { padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: top
 td.wrap { max-width: 420px; color: var(--mist); }
 tr.bad td { color: var(--down); }
 
+/* 2.C.10 — client-side sort/filter enhancer (meridian-v3.js:enhanceTables).
+   Sortable headers get a pointer cursor and a small gold direction glyph on
+   the active column; nothing else about the table markup changes. */
+table[data-sortable] th { cursor: pointer; user-select: none; }
+table[data-sortable] th.sorted-asc::after { content: " \2191"; color: var(--gold); }
+table[data-sortable] th.sorted-desc::after { content: " \2193"; color: var(--gold); }
+.table-filter { display: block; width: 100%; max-width: 320px; margin-bottom: 8px; padding: 6px 8px; }
+
+/* 2.C.12 — a 9-12 column table (Fills, settled trades, decision log)
+   overflows badly on a phone. Rather than a full card-layout rewrite, wrap
+   it so it scrolls horizontally and pin the Name/symbol column so the
+   reader always has their bearings while scrolling the rest sideways.
+   This targets `.col-pin` rather than `:first-child` — in these tables the
+   literal first column is "When" (a timestamp), not the symbol, so pinning
+   by position would anchor the wrong column; the symbol cell is marked
+   explicitly instead. The sticky cell needs its own opaque background or
+   the scrolled-under columns show through it. */
+.table-scroll { overflow-x: auto; }
+.table-scroll table .col-pin {
+  position: sticky;
+  left: 0;
+  background: var(--panel);
+  z-index: 1;
+}
+
 .btn { padding: 6px 12px; background: var(--panel-2); }
 .btn.primary { border-color: var(--gold); color: var(--gold); }
 .btn:disabled, .btn[disabled] { opacity: 0.6; cursor: progress; }
@@ -120,6 +145,9 @@ tr.bad td { color: var(--down); }
 label { display: grid; gap: 4px; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ash); }
 input { padding: 6px 8px; }
 .chart-box { position: relative; height: 420px; background: var(--panel); border: 1px solid var(--line); }
+/* 2.C.8 — smaller variant for the Command-page equity curve; a full 420px
+   candlestick-sized panel would dominate a page that's meant to stay terse. */
+.chart-box.chart-box-sm { height: 220px; }
 /* 2.B.7 — .chart-box starts completely empty while mountChart() awaits its
    fetch; give it an immediate placeholder instead of a blank panel. Removed
    once the chart mounts, or repurposed to show a failure message. */

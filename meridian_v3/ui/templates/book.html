@@ -99,13 +99,14 @@
   <p class="figure {{ 'up' if paper_settled.pnl > 0.5 else 'down' if paper_settled.pnl < -0.5 else '' }}">{{ paper_settled.pnl | inr }}</p>
   <p class="meta">{{ paper_settled.count }} closed · tape {{ paper_settled.gross | inr }} · fees {{ paper_settled.fees | inr }} · net {{ paper_settled.pnl | inr }}. Net = tape move minus the bill.</p>
   {% endif %}
-  <table>
-    <thead><tr><th>When</th><th>Name</th><th>Market</th><th>Side</th><th>Qty</th><th>Avg buy</th><th>Exit</th><th>Tape P&amp;L</th><th>Fees</th><th>Net</th><th>Why</th></tr></thead>
+  <div class="table-scroll">
+  <table data-sortable>
+    <thead><tr><th>When</th><th class="col-pin">Name</th><th>Market</th><th>Side</th><th>Qty</th><th>Avg buy</th><th>Exit</th><th>Tape P&amp;L</th><th>Fees</th><th>Net</th><th>Why</th></tr></thead>
     <tbody>
     {% for p in paper_done %}
       <tr>
         <td class="num">{% if p.closed_at %}{{ p.closed_at.strftime('%d %b %H:%M') }}{% else %}—{% endif %}</td>
-        <td>{{ p.symbol }}{% if p.price_quality == 'fx_fallback' %} <span class="flag" title="Marked through the USDINR fallback rate, not a live cross-rate">fx est.</span>{% endif %}</td>
+        <td class="col-pin">{{ p.symbol }}{% if p.price_quality == 'fx_fallback' %} <span class="flag" title="Marked through the USDINR fallback rate, not a live cross-rate">fx est.</span>{% endif %}</td>
         <td>{{ p.market_label }}</td>
         <td>{{ p.side }}</td>
         <td class="num">{{ p.qty }}</td>
@@ -121,19 +122,21 @@
     {% endfor %}
     </tbody>
   </table>
+  </div>
 </article>
 <article class="panel" id="panel-settled-live">
   <h2>Settled live trades</h2>
   {% if live_settled and live_settled.count %}
   <p class="meta">{{ live_settled.count }} closed · net {{ live_settled.pnl | inr }}</p>
   {% endif %}
-  <table>
-    <thead><tr><th>When</th><th>Name</th><th>Market</th><th>Side</th><th>Qty</th><th>Avg buy</th><th>Exit</th><th>Tape P&amp;L</th><th>Fees</th><th>Net</th><th>Why</th></tr></thead>
+  <div class="table-scroll">
+  <table data-sortable>
+    <thead><tr><th>When</th><th class="col-pin">Name</th><th>Market</th><th>Side</th><th>Qty</th><th>Avg buy</th><th>Exit</th><th>Tape P&amp;L</th><th>Fees</th><th>Net</th><th>Why</th></tr></thead>
     <tbody>
     {% for p in live_done %}
       <tr>
         <td class="num">{% if p.closed_at %}{{ p.closed_at.strftime('%d %b %H:%M') }}{% else %}—{% endif %}</td>
-        <td>{{ p.symbol }}{% if p.price_quality == 'fx_fallback' %} <span class="flag" title="Marked through the USDINR fallback rate, not a live cross-rate">fx est.</span>{% endif %}</td>
+        <td class="col-pin">{{ p.symbol }}{% if p.price_quality == 'fx_fallback' %} <span class="flag" title="Marked through the USDINR fallback rate, not a live cross-rate">fx est.</span>{% endif %}</td>
         <td>{{ p.market_label }}</td>
         <td>{{ p.side }}</td>
         <td class="num">{{ p.qty }}</td>
@@ -149,13 +152,15 @@
     {% endfor %}
     </tbody>
   </table>
+  </div>
 </article>
 <article class="panel" id="panel-fills">
   <h2>Fills</h2>
-  <table>
+  <div class="table-scroll">
+  <table data-sortable>
     <thead>
       <tr>
-        <th>When</th><th>Venue</th><th>Name</th><th>Side</th><th>Qty</th><th>Price</th>
+        <th>When</th><th>Venue</th><th class="col-pin">Name</th><th>Side</th><th>Qty</th><th>Price</th>
         <th>Brokerage</th><th>GST</th><th>STT</th><th>Stamp</th><th>Fees</th><th>Note</th>
       </tr>
     </thead>
@@ -164,7 +169,7 @@
       <tr>
         <td class="num">{{ f.filled_at.strftime('%d %b %H:%M') }}</td>
         <td>{{ f.venue }}</td>
-        <td>{{ f.symbol }}</td>
+        <td class="col-pin">{{ f.symbol }}</td>
         <td>{{ f.side }}</td>
         <td class="num">{{ f.qty }}</td>
         <td class="num">{{ f.price | inr }}</td>
@@ -180,5 +185,9 @@
     {% endfor %}
     </tbody>
   </table>
+  </div>
+  {% if next_fills_cursor %}
+  <p class="inline"><a class="btn" href="/book?before={{ next_fills_cursor }}">Load more fills</a></p>
+  {% endif %}
 </article>
 {% endblock %}
