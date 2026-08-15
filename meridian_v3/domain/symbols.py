@@ -30,7 +30,11 @@ _SPACE_ALIASES = {
     "ULTRATECH": "ULTRACEMCO",
     "ULTRATECH CEMENT": "ULTRACEMCO",
     "SUN PHARMA": "SUNPHARMA",
-    "TATA MOTORS": "TATAMOTORS",
+    # TATAMOTORS renamed/demerged to TMPV (Tata Motors Passenger Vehicles
+    # Ltd) effective 2025-10-24 -- a statement written before the rename may
+    # still say "TATA MOTORS", but it should resolve to the symbol that's
+    # actually tradeable/priceable today.
+    "TATA MOTORS": "TMPV",
     "TATA STEEL": "TATASTEEL",
     "HINDUNILVR": "HINDUNILVR",
     "HUL": "HINDUNILVR",

@@ -23,7 +23,9 @@ DEMO_WATCH = (
     ("HDFCBANK", "equity", "Quality compounder"),
     ("INFY", "equity", "IT beta"),
     ("TCS", "equity", "Cash-rich IT"),
-    ("TATAMOTORS", "equity", "Cyclical tape"),
+    # TATAMOTORS renamed/demerged to TMPV (Tata Motors Passenger Vehicles
+    # Ltd) effective 2025-10-24 — same continuing listing, new ticker.
+    ("TMPV", "equity", "Cyclical tape"),
     ("NIFTY", "index", "Options buying only, when the signal is huge"),
     ("GOLD", "commodity", "MCX-style gold via a listed proxy — paper only"),
     ("USDINR", "fx", "Nano/micro only"),
@@ -98,7 +100,7 @@ def ensure_demo(session: Session) -> int:
         "HDFCBANK": 1662.0,
         "INFY": 1488.0,
         "TCS": 3125.0,
-        "TATAMOTORS": 678.0,
+        "TMPV": 678.0,
         "NIFTY": 24480.0,
         "GOLD": 7250.0,
         "USDINR": 83.55,

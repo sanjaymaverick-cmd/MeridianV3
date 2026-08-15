@@ -68,6 +68,33 @@ class PriceBar(Base):
     volume: Mapped[float] = mapped_column(Float, default=0.0)
 
 
+class HistoricalBar(Base):
+    """Multi-year daily bars for backtesting/research — deliberately a
+    separate table from ``PriceBar``.
+
+    ``PriceBar`` is the live tape: every refresh cycle wipes and reinserts
+    a rolling ~6mo window per symbol (data_providers/service.py:_apply_frame).
+    A years-deep backfill living in that same table would get silently
+    deleted the next time the live desk refreshes prices. This table is
+    never touched by the live refresh path — only by an explicit backfill
+    (``meridian-v3 backfill-history``), so a backtest always has the full
+    history it was given regardless of what the live desk is doing.
+    """
+
+    __tablename__ = "historical_bars"
+    __table_args__ = (UniqueConstraint("symbol", "bar_date", name="uq_historical_bar_symbol_date"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    bar_date: Mapped[date] = mapped_column(Date, nullable=False)
+    open: Mapped[float] = mapped_column(Float, nullable=False)
+    high: Mapped[float] = mapped_column(Float, nullable=False)
+    low: Mapped[float] = mapped_column(Float, nullable=False)
+    close: Mapped[float] = mapped_column(Float, nullable=False)
+    volume: Mapped[float] = mapped_column(Float, default=0.0)
+    source: Mapped[str] = mapped_column(String(24), default="jugaad_nse")
+
+
 class PriceCache(Base):
     __tablename__ = "price_cache"
 

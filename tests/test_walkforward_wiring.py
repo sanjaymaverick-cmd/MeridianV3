@@ -158,7 +158,7 @@ def test_much_worse_oos_performance_looks_curve_fit(session):
 
 def test_run_cycle_caches_robustness_at_most_once_per_market(session, monkeypatch):
     """DEMO_WATCH has six equity symbols (RELIANCE, HDFCBANK, INFY, TCS,
-    TATAMOTORS, GOLD) that all route to `equity_cash`. `_market_robustness`
+    TMPV, GOLD) that all route to `equity_cash`. `_market_robustness`
     must be called at most once for that market across the whole cycle, not
     once per symbol."""
     seed_demo(session, reset=True)
