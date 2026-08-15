@@ -43,6 +43,7 @@ def evaluate_safety(
     market: str,
     horizon: str,
     now: datetime,
+    daily_loss_inr: float = 0.0,
 ) -> SafetyVerdict:
     reasons: list[str] = []
     allow_paper = True
@@ -55,6 +56,21 @@ def evaluate_safety(
     if drawdown.live_paused:
         allow_live = False
         reasons.append(drawdown.reason)
+
+    # Part 3 item 3 — kill switch: an absolute rupee-per-day circuit breaker,
+    # on top of the drawdown-percentage pause above. This one blocks *both*
+    # paper and live new risk (paper is exactly where "the desk is bleeding
+    # fast today" should be caught early) — but, matching the drawdown-pause
+    # convention, existing open positions are never force-flattened here.
+    if daily_loss_inr >= settings.safety.max_daily_loss_inr:
+        allow_live = False
+        allow_paper = False
+        reasons.append(
+            f"Daily loss line hit: down ₹{daily_loss_inr:,.0f} today against the "
+            f"₹{settings.safety.max_daily_loss_inr:,.0f} daily loss cap. New paper and "
+            "live risk both stop for the rest of the day. Open positions stay open — "
+            "nothing is force-flattened."
+        )
 
     cap = (
         settings.safety.max_daily_live_high_conf

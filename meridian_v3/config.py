@@ -50,6 +50,10 @@ class MarketSpec(BaseModel):
     micro_lots: bool = False
     standard_lots_forbidden: bool = False
     min_lot: float = 1.0
+    # 2.1 — the qty at which a "nano/micro only" market (forex_micro) starts
+    # being a standard lot. OMS._send rejects any order at or above this as
+    # a second line of defense behind the sizer, which never produces one.
+    standard_lot_qty: float = 1.0
     margin_pct: float = 0.12
     max_leverage: float = 2.0
     contract_size: float = 1.0
@@ -93,7 +97,11 @@ class MarketsCfg(BaseModel):
     )
     forex_micro: MarketSpec = Field(
         default_factory=lambda: MarketSpec(
-            nano_lots=True, micro_lots=True, standard_lots_forbidden=True, min_lot=0.01
+            nano_lots=True,
+            micro_lots=True,
+            standard_lots_forbidden=True,
+            min_lot=0.01,
+            standard_lot_qty=1.0,
         )
     )
 
@@ -115,6 +123,10 @@ class SizingCfg(BaseModel):
     max_concurrent_high: int = 20
     max_position_pct: float = 0.18
     cash_reserve_pct: float = 0.10
+    # 2.9 — stop_price() uses this to tell an ATR *distance* apart from an
+    # already-a-price-line stop: a distance bigger than this fraction of
+    # entry is treated as a level, not rupees of room. Was a bare 0.45.
+    stop_distance_ratio_ceiling: float = 0.45
 
 
 class SafetyCfg(BaseModel):
@@ -122,6 +134,12 @@ class SafetyCfg(BaseModel):
     drawdown_scale_start_pct: float = 0.08
     max_daily_live_trades: int = 3
     max_daily_live_high_conf: int = 6
+    # Part 3 item 3 — kill switch. An absolute rupee-per-day circuit breaker,
+    # on top of the drawdown-percentage pause. Applies to paper too, not just
+    # live: paper is exactly where "the desk is bleeding fast today" should
+    # be caught early. docs/10-phases.md names this Phase 3 feature at this
+    # default ("₹2,000 default suggestion").
+    max_daily_loss_inr: float = 2000.0
     overnight_equity_ok: bool = True
     overnight_options_forbidden: bool = True
     overnight_fx_forbidden: bool = True
@@ -133,6 +151,17 @@ class SafetyCfg(BaseModel):
     timezone: str = "Asia/Kolkata"
 
 
+class ExecutionCfg(BaseModel):
+    # Reject a fill whose price is more than this fraction away from the
+    # cached tape. A second gate behind the ``_fill_price`` fix so a 3x/10x
+    # unit-mismatch can never silently reach a Fill or Position.
+    max_fill_deviation_pct: float = 0.25
+    # A same-mark EOD/weekend flatten within this fraction of entry is a
+    # cost-only "scratch", not a directional outcome — it must not move the
+    # belief prior.
+    flat_scratch_pct: float = 0.001
+
+
 class DecisionCfg(BaseModel):
     paper_all_signals: bool = True
     live_requires_arm: bool = True
@@ -142,6 +171,11 @@ class DecisionCfg(BaseModel):
     freshness_half_life_hours: float = 6.0
     min_freshness: float = 0.35
     walkforward_oos_gap_max: float = 0.35
+    # 2.5 — minimum gap since a symbol's last paper close before it can be
+    # reopened, unless the new signal clears reentry_confidence_margin above
+    # the confidence that closed clip was opened on (F16).
+    reentry_cooldown_sec: int = 300
+    reentry_confidence_margin: float = 0.05
 
 
 class RegimeCfg(BaseModel):
@@ -176,12 +210,22 @@ class AlertsCfg(BaseModel):
     snooze_hours: int = 24
     auto_start: bool = True
     price_every_cycles: int = 5
+    # Part 3 item 6 — optional outbound webhook for operator alerts (drawdown
+    # pause, live arm/disarm, worker death, large repair runs). Unset by
+    # default: alerting works with zero external config (log line + DeskEvent
+    # row); a webhook is an opt-in extra for whoever configures one.
+    webhook_url: str | None = None
 
 
 class ProvidersCfg(BaseModel):
     yfinance_enabled: bool = True
     price_ttl_minutes: int = 15
     request_sleep_ms: int = 400
+    # 0.6 — overlay an intraday mark on top of the 6mo daily context so a
+    # same-day paper clip can actually move between its open and its close.
+    intraday_marks: bool = True
+    intraday_interval: str = "5m"
+    intraday_period: str = "1d"
 
 
 class ModulesCfg(BaseModel):
@@ -233,6 +277,7 @@ class Settings(BaseSettings):
     markets: MarketsCfg = Field(default_factory=MarketsCfg)
     sizing: SizingCfg = Field(default_factory=SizingCfg)
     safety: SafetyCfg = Field(default_factory=SafetyCfg)
+    execution: ExecutionCfg = Field(default_factory=ExecutionCfg)
     decision: DecisionCfg = Field(default_factory=DecisionCfg)
     regime: RegimeCfg = Field(default_factory=RegimeCfg)
     greeks: GreeksCfg = Field(default_factory=GreeksCfg)

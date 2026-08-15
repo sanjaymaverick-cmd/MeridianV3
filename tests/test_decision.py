@@ -30,9 +30,6 @@ def _input(**kwargs):
         live_armed=False,
         live_today=0,
         open_count=0,
-        equity_score=80,
-        options_score=20,
-        forex_score=10,
         now=datetime.now(timezone.utc),
     )
     base.update(kwargs)

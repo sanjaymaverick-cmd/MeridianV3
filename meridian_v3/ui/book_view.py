@@ -16,6 +16,7 @@ def decorate_positions(session: Session, rows: list[Position]) -> list[dict]:
     out: list[dict] = []
     for row in rows:
         last = _last(session, row.symbol)
+        quality = _quality(session, row.symbol)
         qty = row.qty if row.status == "open" else (row.close_qty or 0.0)
         if row.status == "closed" and qty <= 0:
             qty = _closed_qty(session, row)
@@ -25,7 +26,7 @@ def decorate_positions(session: Session, rows: list[Position]) -> list[dict]:
             mark = last if last else avg
             avg, mark, _shifted = align_prices(avg, mark, row.market)
             gross, net = _split(row.side, avg, mark, row.qty, fees)
-            out.append(_card(row, qty, avg, mark, net, "open", fees, gross=gross))
+            out.append(_card(row, qty, avg, mark, net, "open", fees, gross=gross, price_quality=quality))
             continue
         exit_px = row.exit_price
         if exit_px is None:
@@ -33,7 +34,18 @@ def decorate_positions(session: Session, rows: list[Position]) -> list[dict]:
         avg, exit_px, _shifted = align_prices(avg or 0.0, exit_px or 0.0, row.market)
         gross, net = _split(row.side, avg, exit_px, qty, fees)
         out.append(
-            _card(row, qty, avg, exit_px, net, "closed", fees, reason=_exit_reason(session, row), gross=gross)
+            _card(
+                row,
+                qty,
+                avg,
+                exit_px,
+                net,
+                "closed",
+                fees,
+                reason=_exit_reason(session, row),
+                gross=gross,
+                price_quality=quality,
+            )
         )
     return out
 
@@ -64,6 +76,7 @@ def decorate_fills(rows: list[Fill]) -> list[dict]:
                 "qty": fill.qty,
                 "price": fill.price,
                 "note": fill.note,
+                "correction_note": fill.correction_note,
                 "broker": raw.get("broker", ""),
                 "brokerage": float(raw.get("brokerage") or 0),
                 "gst": float(raw.get("gst") or 0),
@@ -154,7 +167,19 @@ def _card(
     fees: float,
     reason: str = "",
     gross: float | None = None,
+    price_quality: str | None = None,
 ) -> dict:
+    # 2.A.4 — a settled clip whose tape (gross) barely moved is a fee-only
+    # scratch, not a directional loss. `pnl` (net of fees) is still shown as
+    # a small negative number, but the color class must not read "down" the
+    # same way a real loss does — that's exactly the "silently wrong" gap
+    # the audit flagged. Reuse `_tone()`'s existing ₹0.50 epsilon so "flat"
+    # means the same thing everywhere on the book. Open clips keep the
+    # ordinary tone logic (a gross≈0 open position is just "flat right now,"
+    # not a scratch outcome yet).
+    pnl_class = _tone(pnl)
+    if kind == "closed" and gross is not None and abs(gross) <= 0.5:
+        pnl_class = "scratch"
     return {
         "id": row.id,
         "venue": row.venue,
@@ -166,12 +191,18 @@ def _card(
         "gross": gross,
         "gross_class": _tone(gross),
         "pnl": pnl,
-        "pnl_class": _tone(pnl),
+        "pnl_class": pnl_class,
         "fees": fees,
         "market": row.market,
         "market_label": MARKET_LABELS.get(row.market or "", row.market or ""),
         "horizon": row.horizon,
         "status": row.status,
+        # 2.A.3 — surface the flags that actually exist in the live DB so
+        # the template can badge them instead of presenting every number
+        # with the same visual weight (F3/F12/F15 made honest; this makes
+        # that honesty visible).
+        "unreconciled": row.status == "unreconciled",
+        "price_quality": price_quality,
         "kind": kind,
         "reason": reason,
         "opened_at": row.opened_at,
@@ -223,6 +254,25 @@ def _last(session: Session, symbol: str) -> float | None:
     cache = session.scalar(select(PriceCache).where(PriceCache.symbol == symbol))
     if cache and cache.last:
         return float(cache.last)
+    return None
+
+
+_FLAGGABLE_QUALITY = {"fx_fallback"}
+
+
+def _quality(session: Session, symbol: str) -> str | None:
+    """A flaggable `PriceCache.quality` for this symbol, or None when clean.
+
+    2.A.3 — the only quality flag currently written is "fx_fallback" (a mark
+    converted through the hardcoded USDINR 83.5 fallback rather than a live
+    cross-rate). "live"/"seed"/"intraday"/"missing" are ordinary states, not
+    something to badge — checking "!= ok" here would be wrong, since a
+    refreshed symbol's quality is "live", never the literal string "ok"
+    (that's only the raw schema default before any refresh has ever run).
+    """
+    cache = session.scalar(select(PriceCache).where(PriceCache.symbol == symbol))
+    if cache and cache.quality in _FLAGGABLE_QUALITY:
+        return cache.quality
     return None
 
 

@@ -8,7 +8,10 @@ import webbrowser
 
 import uvicorn
 
+from loguru import logger
+
 from meridian_v3.config import get_settings
+from meridian_v3.logging import setup_logging
 from meridian_v3.storage.db import get_session, init_db
 from meridian_v3.storage.seed import seed_demo
 
@@ -20,7 +23,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     sub = parser.add_subparsers(dest="cmd")
     sub.add_parser("serve", help="Start the local V3 desk (default, port 8777)")
-    seed = sub.add_parser("seed", help="Load the demonstration ₹5,000 book if empty")
+    seed = sub.add_parser("seed", help="Load the demonstration ₹50,000 book if empty")
     seed.add_argument("--reset", action="store_true")
     sub.add_parser("cycle", help="Run one signal → paper (maybe live) cycle")
     prices = sub.add_parser("prices", help="Refresh marks from free sources")
@@ -42,9 +45,26 @@ def main(argv: list[str] | None = None) -> int:
         help="Rewrite 10x / margin-priced paper fills and recompute honest settled P&L",
     )
     sub.add_parser("desktop", help="Open MERIDIAN V3 in a native window")
+    sub.add_parser(
+        "register-dry-run-broker",
+        help=(
+            "TESTING ONLY: registers DryRunBroker and places one synthetic demo order in "
+            "THIS process, as a smoke test that the class itself works -- it exits "
+            "immediately afterward, so this alone does NOT reach a separately-running "
+            "`serve` process (different OS process, different registry). To actually "
+            "exercise the live order path (arm -> live decision -> OMS -> PluginBroker -> "
+            "broker) against a running desk, set MERIDIAN_V3_DRY_RUN_BROKER=1 before "
+            "launching `serve` instead -- see app.py:create_app(). Never registered "
+            "automatically either way."
+        ),
+    )
     args = parser.parse_args(argv)
 
+    # 2.6 — same as app.py: turn the log file on before anything else runs
+    # so a CLI-triggered boot repair failure leaves a trail.
+    setup_logging()
     init_db()
+    logger.info("CLI command: {}", args.cmd or "serve")
 
     if args.cmd == "seed":
         return _seed(reset=args.reset)
@@ -62,6 +82,8 @@ def main(argv: list[str] | None = None) -> int:
         return _repair_book()
     if args.cmd == "desktop":
         return _desktop()
+    if args.cmd == "register-dry-run-broker":
+        return _register_dry_run_broker()
     return _serve()
 
 
@@ -193,6 +215,7 @@ def _arm(*, on: bool) -> int:
 
     from sqlalchemy import select
 
+    from meridian_v3.alerts.notify import emit_alert
     from meridian_v3.storage.schema import AccountState
 
     session = get_session()
@@ -203,11 +226,61 @@ def _arm(*, on: bool) -> int:
             return 1
         live.live_armed = 1 if on else 0
         live.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        logger.info("live arm toggled: live_armed={}", bool(live.live_armed))
+        emit_alert(
+            session,
+            "live_arm_toggled",
+            f"Live trading {'ARMED' if live.live_armed else 'DISARMED'} from the CLI.",
+        )
         session.commit()
         print("live ARMED" if on else "live DISARMED — paper still runs")
         return 0
     finally:
         session.close()
+
+
+def _register_dry_run_broker() -> int:
+    """TESTING ONLY. Registers DryRunBroker and places one synthetic demo order
+    through it in THIS process, as a smoke test that the class itself works.
+
+    This process exits right after, so registration here never reaches a
+    separately-launched `serve` process (a different OS process has its own
+    empty broker registry). To actually exercise the live order path against
+    a running desk, set MERIDIAN_V3_DRY_RUN_BROKER=1 before `serve` instead
+    (see app.py:create_app()) -- that registers in the same process that
+    then serves. Never registered automatically either way.
+    """
+    from datetime import datetime, timezone
+
+    from meridian_v3.execution.brokers.base import OrderRequest
+    from meridian_v3.execution.brokers.dry_run import DryRunBroker
+    from meridian_v3.execution.brokers.plugin import register_broker
+
+    broker = DryRunBroker()
+    register_broker(broker)
+    logger.warning(
+        "DryRunBroker registered as the live broker adapter (this process only). "
+        "This is NOT a real venue -- 'place' calls are logged and synthetic, no "
+        "real money moves. Testing only."
+    )
+    demo = OrderRequest(
+        client_id=f"dry-run-smoke-{datetime.now(timezone.utc).timestamp():.0f}",
+        symbol="DEMO",
+        side="buy",
+        qty=1,
+        price=100.0,
+        market="equity_cash",
+        venue="live",
+    )
+    result = broker.place(demo)
+    print(
+        f"DryRunBroker registered and smoke-tested: place() returned ok={result.ok}, "
+        f"status={result.status!r} -- nothing was sent to a real venue.\n"
+        "This registration does not persist to a separately-launched `serve` process. "
+        "To exercise the live order path against a running desk, set "
+        "MERIDIAN_V3_DRY_RUN_BROKER=1 before launching `serve` instead."
+    )
+    return 0
 
 
 def _serve(*, open_browser: bool | None = None, log_level: str = "info") -> int:

@@ -7,14 +7,16 @@ from meridian_v3.router.markets import route_market
 from meridian_v3.safety.guards import evaluate_safety
 
 
-def test_home_bias():
-    route = route_market(equity_score=50, options_score=55, forex_score=40)
-    assert route.market == "equity_cash"
-
-
-def test_shift_when_visitor_is_clearly_stronger():
-    route = route_market(equity_score=40, options_score=80, forex_score=10)
+def test_route_follows_the_preferred_market():
+    # 1.3 — routing is suffix/asset-class dispatch: `route_market` just
+    # returns whatever `market_for` decided, there is no score competition.
+    route = route_market(preferred="options_buy")
     assert route.market == "options_buy"
+
+
+def test_route_defaults_to_equity_cash_with_no_preference():
+    route = route_market()
+    assert route.market == "equity_cash"
 
 
 def test_live_requires_arm():

@@ -12,7 +12,21 @@
   <article class="panel">
     <h2>Live switch</h2>
     <p class="note">Default is off. Arm only when you have plugged a broker adapter and you accept live risk on the ₹50,000 book.</p>
-    <form method="post" action="/desk/arm" class="inline">
+    <p class="meta">
+      Broker adapter:
+      {% if live_broker_name %}
+      {{ live_broker_name }} connected
+      {% else %}
+      none registered — live orders will be rejected
+      {% endif %}
+    </p>
+    <form
+      method="post"
+      action="/desk/arm"
+      class="inline"
+      data-confirm-arm
+      data-adapter-name="{{ live_broker_name or '' }}"
+    >
       <input type="hidden" name="on" value="1">
       <button class="btn primary" type="submit">Arm live</button>
     </form>

@@ -45,7 +45,7 @@ Native window: `pip install -e ".[desktop]"` then `python -m meridian_v3 desktop
 
 1. V1 equity book habits — five-factor score, regime hysteresis, SHAP-style notes kept private, simple language.
 2. V2 risk desk — full Greeks, Daily PnL (theta), Gamma Scalping PnL, six vega actions, Lightweight Charts overlays.
-3. V3 auto layer — decision engine, ₹5,000-aware sizer, multi-market router, hybrid paper + live OMS.
+3. V3 auto layer — decision engine, ₹50,000-aware sizer, multi-market router, hybrid paper + live OMS.
 4. Portfolio import — CSV / XLSX / PDF / screenshot, Indian stocks + mutual funds / ETFs, review-then-commit.
 5. Safety — 20% drawdown pause for **new** live risk, daily live cap, overnight filters, options buying only, forex nano/micro only.
 
@@ -67,14 +67,15 @@ The browser only receives finished JSON: candles, diamonds, lines, zones, window
 |---|---|---|
 | 1 | [ARCHITECTURE.md](ARCHITECTURE.md) | V1 → V2 → V3 layers |
 | 2 | [docs/02-auto-decision.md](docs/02-auto-decision.md) | Auto Decision Engine |
-| 3 | [docs/03-capital-sizing.md](docs/03-capital-sizing.md) | ₹5,000 sizer |
+| 3 | [docs/03-capital-sizing.md](docs/03-capital-sizing.md) | ₹50,000 sizer |
 | 4 | [docs/04-hybrid-paper-live.md](docs/04-hybrid-paper-live.md) | Paper + live |
 | 5 | [docs/05-mathematics.md](docs/05-mathematics.md) | Formulas |
 | 6 | [docs/06-data-flow.md](docs/06-data-flow.md) | Signal → paper → live |
-| 7 | [docs/07-safety.md](docs/07-safety.md) | ₹5,000 safety |
+| 7 | [docs/07-safety.md](docs/07-safety.md) | ₹50,000 safety |
 | 8 | [docs/08-reviews.md](docs/08-reviews.md) | Simple-language reviews |
 | 9 | [docs/09-portfolio-import.md](docs/09-portfolio-import.md) | PDF / XLSX / OCR |
 | 10 | [docs/10-phases.md](docs/10-phases.md) | Phased build |
 | 11 | [docs/11-proprietary.md](docs/11-proprietary.md) | How the math stays private |
+| 12 | [docs/12-independent-review-prompt.md](docs/12-independent-review-prompt.md) | Prompt for an independent full-desk audit |
 
-This is personal software. It is not an offer of investment advice to the public. You can lose the whole ₹5,000.
+This is personal software. It is not an offer of investment advice to the public. You can lose the whole ₹50,000.

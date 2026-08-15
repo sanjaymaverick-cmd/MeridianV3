@@ -82,12 +82,26 @@ def test_repairs_silver_short_booked_at_one_tenth(session):
     )
     session.flush()
 
+    entry_note_before = "PAPER FILL: SELL 0.04 SILVER.X near ₹622.87."
+    exit_note_before = "PAPER EXIT: Stop hit.  P&L ₹-224 after fees ₹0.09."
+
     assert repair_shifted_clips(session) == 1
     pos = session.query(Position).one()
     assert pos.avg_price == pytest.approx(6228.7, abs=1.0)
     assert abs(pos.realized_pnl) < 1.0
     entry = session.query(Fill).filter_by(side="sell").one()
     assert entry.price == pytest.approx(6228.7, abs=1.0)
+
+    # 2.4 — the repair corrected the price and PnL, but `note` (the journal
+    # ticket written the moment the fill happened) is never rewritten. What
+    # changed is recorded separately in `correction_note`.
+    exit_fill = session.query(Fill).filter_by(side="buy").one()
+    assert entry.note == entry_note_before
+    assert exit_fill.note == exit_note_before
+    assert "622.87" in entry.correction_note
+    assert "6,228.70" in entry.correction_note
+    assert "P&L" in exit_fill.correction_note
+
     assert repair_shifted_clips(session) == 0
 
 
@@ -162,6 +176,54 @@ def test_repairs_india_future_margin_over_qty(session):
     pos = session.query(Position).one()
     assert pos.avg_price == pytest.approx(24421, abs=30)
     assert abs(pos.realized_pnl) < 5
+
+
+def test_reconstructs_exit_from_matching_fill_and_is_idempotent(session):
+    """0.4 — a closed clip with exit_price=None is rebuilt from its real exit fill."""
+    _paper(session)
+    opened = _now()
+    session.add(
+        Position(
+            venue="paper", market="equity_cash", symbol="INFY", side="buy",
+            qty=0, avg_price=1400.0, close_qty=2, exit_price=None, realized_pnl=None,
+            status="closed", source="test", opened_at=opened, closed_at=opened,
+        )
+    )
+    session.add(Fill(venue="paper", symbol="INFY", side="buy", qty=2, price=1400.0, fees=1.0, filled_at=opened, note="entry"))
+    session.add(Fill(venue="paper", symbol="INFY", side="sell", qty=2, price=1460.0, fees=1.5, filled_at=opened, note="exit"))
+    session.flush()
+
+    assert repair_shifted_clips(session) == 1
+    pos = session.query(Position).filter_by(symbol="INFY").one()
+    assert pos.exit_price == pytest.approx(1460.0)
+    # (1460 - 1400) * 2 - fees(1.0 + 1.5) = 120 - 2.5
+    assert pos.realized_pnl == pytest.approx(117.5, abs=0.01)
+    assert pos.status == "closed"
+    # honest exit is now set → a second run changes nothing
+    assert repair_shifted_clips(session) == 0
+
+
+def test_flags_unreconciled_when_no_exit_fill_exists(session):
+    """0.4 — with nothing honest to align to, the row is flagged, never rewritten."""
+    _paper(session)
+    opened = _now()
+    session.add(PriceCache(symbol="TCS", last=99_999.0, quality="live"))  # a tempting-but-irrelevant mark
+    session.add(
+        Position(
+            venue="paper", market="equity_cash", symbol="TCS", side="buy",
+            qty=0, avg_price=3000.0, close_qty=1, exit_price=None, realized_pnl=None,
+            status="closed", source="test", opened_at=opened, closed_at=opened,
+        )
+    )
+    session.add(Fill(venue="paper", symbol="TCS", side="buy", qty=1, price=3000.0, fees=1.0, filled_at=opened, note="entry"))
+    session.flush()
+
+    assert repair_shifted_clips(session) == 1
+    pos = session.query(Position).filter_by(symbol="TCS").one()
+    assert pos.status == "unreconciled"
+    assert pos.exit_price is None
+    assert pos.avg_price == pytest.approx(3000.0)  # never rewritten against the 99,999 mark
+    assert repair_shifted_clips(session) == 0
 
 
 def test_commodity_short_does_not_stop_on_atr_distance(session):

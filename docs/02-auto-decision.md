@@ -14,7 +14,7 @@ The engine answers one question: **Buy, Sell, or Hold — and may this clip be p
 | p(success) | Meta-label logistic, updated from paper outcomes |
 | Belief | Beta(α, β) per rule, updated from paper wins/losses |
 | Edge vs costs | Expected rupees minus brokerage/STT/slippage/spread + pad |
-| Route | Equity cash home while NSE is open; crypto 24/7, FX 24/5, global commodities when those tapes are stronger or India is shut |
+| Route | Suffix/asset-class dispatch (`router/markets.py:market_for`) — a symbol's own suffix (`.F`/`.C`/`.X`/`USDT`) or asset class decides its market outright, e.g. equity cash for plain shares, crypto 24/7, FX 24/5, global commodities. There is no runtime scoring contest between markets; the same symbol always routes to the same market (F6) |
 | Size | Confidence-weighted fractional Kelly × ATR |
 | Safety | Drawdown, arm switch, daily live cap, session |
 
@@ -25,7 +25,7 @@ The engine answers one question: **Buy, Sell, or Hold — and may this clip be p
 3. Meta-label `p ≥ 0.52` to even consider a clip.
 4. Freshness above the floor (default 0.35).
 5. Expected edge > estimated costs + safety margin.
-6. Sizer must fit the ₹5,000 book (at least one share, or skip).
+6. Sizer must fit the ₹50,000 book (at least one share, or skip).
 7. **Paper** if the above pass.
 8. **Live** only if paper passed **and** live is armed **and** confidence ≥ 0.82 **and** confluence ≥ 62 **and** drawdown < 20% **and** daily live cap not spent.
 

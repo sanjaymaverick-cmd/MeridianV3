@@ -46,6 +46,49 @@ def composite_score(parts: dict[str, float | None], weights: dict[str, Decimal])
     return (total / mass).quantize(Decimal("0.01"))
 
 
+def factor_parts_from_tape(
+    *,
+    last: float | None,
+    sma20: float | None,
+    sma50: float | None,
+    high20: float | None,
+    low20: float | None,
+    rsi_value: float | None,
+) -> dict[str, float | None]:
+    """Technical + valuation factor inputs built from the tape we actually have.
+
+    There is no fundamentals feed wired into this desk (no source for
+    quality/ownership/sentiment), so those three factors stay ``None``.
+    ``composite_score`` already skips ``None`` parts in its weighted average,
+    so a symbol is scored on whatever real factors exist rather than a
+    fabricated number for data we don't have.
+    """
+    technical = None
+    if last and sma20 and sma50:
+        tilt = 5.0
+        tilt += 2.0 if sma20 > sma50 else -2.0
+        tilt += 1.0 if last > sma20 else -1.0
+        if rsi_value is not None:
+            if rsi_value < 30:
+                tilt += 1.0
+            elif rsi_value > 70:
+                tilt -= 1.0
+        technical = max(0.0, min(10.0, tilt))
+    valuation = None
+    if last and high20 and low20 and high20 > low20:
+        # Nearer the 20-day low reads "cheaper" (higher valuation score);
+        # nearer the high reads "dearer".
+        position = (last - low20) / (high20 - low20)
+        valuation = max(0.0, min(10.0, 10.0 - position * 10.0))
+    return {
+        "quality": None,
+        "valuation": valuation,
+        "technical": technical,
+        "ownership": None,
+        "sentiment": None,
+    }
+
+
 def map_action(score: Decimal | None, label: str = "Calm") -> str:
     if score is None:
         return "—"

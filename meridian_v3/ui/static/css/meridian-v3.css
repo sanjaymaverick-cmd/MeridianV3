@@ -32,7 +32,18 @@ body.light {
   --line: #ddd6c8;
   --ivory: #2a261f;
   --mist: #5c564b;
-  --ash: #7a7366;
+  --ash: #6d6659;
+  /* 2.E.17 — --gold (and --elevated, which mirrors it) is tuned for the
+     near-black dark palette; unchanged, it measures ~2.1-2.4:1 against the
+     light palette's cream panels, well under WCAG AA's 4.5:1 for the small
+     uppercase text it's used on (.kicker, .badge, .defs dt, the 2.C.10
+     sort-direction glyphs). Darken it for light mode only — same hue,
+     deeper — so gold accents stay legible; dark theme is untouched.
+     --ash is nudged darker for the same reason: it measured ~4.1-4.2:1 on
+     --panel, just under AA (this is what .chart-box .skeleton-state's
+     loading text uses, among other labels). */
+  --gold: #7a5c25;
+  --elevated: #7a5c25;
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -97,6 +108,14 @@ h1 { font-size: 26px; font-weight: 400; margin: 0 0 8px; }
 .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .num.up, .figure.up { color: var(--up); }
 .num.down, .figure.down { color: var(--down); }
+/* 2.A.4 — a settled clip whose tape barely moved is a fee-only scratch, not
+   a directional loss; give it its own muted tone instead of reading "down"
+   like a real loss. */
+.num.scratch, .figure.scratch { color: var(--mist); }
+/* 2.A.3 — small inline data-quality badge (fx-fallback mark, corrected fill,
+   unreconciled position). Dotted underline + muted color, matching the
+   existing .meta/.note treatment rather than inventing a new visual language. */
+.flag { border-bottom: 1px dotted var(--ash); color: var(--mist); font-size: 10px; letter-spacing: 0.04em; cursor: help; white-space: nowrap; }
 
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th { text-align: left; font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ash); font-weight: 500; padding: 6px 8px; border-bottom: 1px solid var(--line); }
@@ -104,13 +123,51 @@ td { padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: top
 td.wrap { max-width: 420px; color: var(--mist); }
 tr.bad td { color: var(--down); }
 
+/* 2.C.10 — client-side sort/filter enhancer (meridian-v3.js:enhanceTables).
+   Sortable headers get a pointer cursor and a small gold direction glyph on
+   the active column; nothing else about the table markup changes. */
+table[data-sortable] th { cursor: pointer; user-select: none; }
+table[data-sortable] th.sorted-asc::after { content: " \2191"; color: var(--gold); }
+table[data-sortable] th.sorted-desc::after { content: " \2193"; color: var(--gold); }
+.table-filter { display: block; width: 100%; max-width: 320px; margin-bottom: 8px; padding: 6px 8px; }
+
+/* 2.C.12 — a 9-12 column table (Fills, settled trades, decision log)
+   overflows badly on a phone. Rather than a full card-layout rewrite, wrap
+   it so it scrolls horizontally and pin the Name/symbol column so the
+   reader always has their bearings while scrolling the rest sideways.
+   This targets `.col-pin` rather than `:first-child` — in these tables the
+   literal first column is "When" (a timestamp), not the symbol, so pinning
+   by position would anchor the wrong column; the symbol cell is marked
+   explicitly instead. The sticky cell needs its own opaque background or
+   the scrolled-under columns show through it. */
+.table-scroll { overflow-x: auto; }
+.table-scroll table .col-pin {
+  position: sticky;
+  left: 0;
+  background: var(--panel);
+  z-index: 1;
+}
+
 .btn { padding: 6px 12px; background: var(--panel-2); }
 .btn.primary { border-color: var(--gold); color: var(--gold); }
+.btn:disabled, .btn[disabled] { opacity: 0.6; cursor: progress; }
 .inline { display: flex; gap: 8px; align-items: end; flex-wrap: wrap; }
 .stack { display: grid; gap: 10px; max-width: 480px; }
 label { display: grid; gap: 4px; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ash); }
 input { padding: 6px 8px; }
-.chart-box { height: 420px; background: var(--panel); border: 1px solid var(--line); }
+.chart-box { position: relative; height: 420px; background: var(--panel); border: 1px solid var(--line); }
+/* 2.C.8 — smaller variant for the Command-page equity curve; a full 420px
+   candlestick-sized panel would dominate a page that's meant to stay terse. */
+.chart-box.chart-box-sm { height: 220px; }
+/* 2.B.7 — .chart-box starts completely empty while mountChart() awaits its
+   fetch; give it an immediate placeholder instead of a blank panel. Removed
+   once the chart mounts, or repurposed to show a failure message. */
+.chart-box .skeleton-state {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  padding: var(--space-5); text-align: center; color: var(--ash); font-size: 12px;
+  letter-spacing: 0.08em; text-transform: uppercase; animation: chart-pulse 1.6s ease-in-out infinite;
+}
+@keyframes chart-pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 0.9; } }
 .chart-tip { position: absolute; z-index: 3; padding: 6px 8px; font-size: 11px; border: 1px solid var(--line); display: grid; gap: 2px; }
 .review-card { border-top: 1px solid var(--line); padding: 10px 0; }
 .plain { color: var(--mist); padding-left: 18px; }

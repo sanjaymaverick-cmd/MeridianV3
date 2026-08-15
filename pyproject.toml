@@ -30,7 +30,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.3", "ruff>=0.8"]
+dev = ["pytest>=8.3", "pytest-xdist>=3.6", "ruff>=0.8"]
 desktop = ["pywebview>=5.3"]
 ocr = ["pytesseract>=0.3.13"]
 

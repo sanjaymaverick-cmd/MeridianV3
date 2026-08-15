@@ -2,7 +2,7 @@
 
 Module: `meridian_v3/capital/sizer.py`
 
-Bankroll is the **whole dedicated book**, starting at ₹5,000. Profits compound because yesterday’s equity is today’s bankroll.
+Bankroll is the **whole dedicated book**, starting at ₹50,000. Profits compound because yesterday’s equity is today’s bankroll.
 
 ## Stack
 
@@ -32,7 +32,7 @@ qty         = min(qty, cash_after_reserve / price, max_position)
 
 ## Concurrency
 
-Normal days: at most 2 open clips. High confidence: at most 4, and only if cash remains.
+Normal days: at most 16 open clips. High confidence: at most 20, and only if cash remains.
 
 ## Horizon
 

@@ -45,19 +45,22 @@ class DecisionInput:
     live_armed: bool
     live_today: int
     open_count: int
-    equity_score: float
-    options_score: float
-    forex_score: float
-    crypto_score: float = 0.0
-    futures_score: float = 0.0
-    commodity_score: float = 0.0
+    # Part 3 item 3 — rupee-per-day kill switch. "Loss so far today" for the
+    # venue this decision is being scored against (paper or live, mirroring
+    # how `drawdown` is already selected per-venue in pipeline.run_cycle).
+    # 0.0 means "nothing lost yet today" — the safe default for callers that
+    # don't compute this (e.g. existing tests).
+    daily_loss_inr: float = 0.0
+    # 1.3 — routing is suffix/asset-class dispatch (router/markets.py:market_for),
+    # always decided up front and passed in here as `preferred_market`. The
+    # router used to also accept competing per-market scores, but the live
+    # cycle always supplied `preferred_market` so that comparison never ran;
+    # it has been removed rather than kept on as dead code (F6).
     preferred_market: str | None = None
     now: datetime | None = None
     belief: BetaBelief | None = None
     logit: OnlineLogit | None = None
     robustness: Robustness | None = None
-    options_allowed: bool = True
-    forex_allowed: bool = True
     held_qty: float = 0.0
 
 
@@ -111,17 +114,7 @@ def decide(inp: DecisionInput, settings: Settings | None = None) -> AutoDecision
         confidence *= 0.7
         reasons.append(inp.robustness.reason)
 
-    route = route_market(
-        equity_score=inp.equity_score,
-        options_score=inp.options_score,
-        forex_score=inp.forex_score,
-        crypto_score=inp.crypto_score,
-        futures_score=inp.futures_score,
-        commodity_score=inp.commodity_score,
-        options_allowed=inp.options_allowed,
-        forex_allowed=inp.forex_allowed,
-        preferred=inp.preferred_market,
-    )
+    route = route_market(preferred=inp.preferred_market)
 
     action = "hold"
     if inp.primary.direction > 0 and conf.side >= 0 and meta.take and not fresh.stale:
@@ -186,9 +179,19 @@ def decide(inp: DecisionInput, settings: Settings | None = None) -> AutoDecision
         market=route.market,
         horizon=size.horizon,
         now=now,
+        daily_loss_inr=inp.daily_loss_inr,
     )
 
-    paper = settings.decision.paper_all_signals and action != "hold" and not size.blocked
+    # `safety` is computed above this line, so `safety.allow_paper` (which
+    # the daily-loss kill switch can now set False) is enforced here rather
+    # than being computed and silently discarded (it previously was — see
+    # Part 3 item 3 of the fix plan).
+    paper = (
+        settings.decision.paper_all_signals
+        and action != "hold"
+        and not size.blocked
+        and safety.allow_paper
+    )
     live = (
         paper
         and safety.allow_live

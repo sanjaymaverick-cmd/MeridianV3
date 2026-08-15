@@ -6,7 +6,7 @@
     <p class="kicker">Dedicated account</p>
     <h1>Paper and live, side by side</h1>
     <p class="lede">Seed once. The algo scans NSE/BSE cash, India F&amp;O, global commodities (COMEX/NYMEX/ICE), FX nano/micro, and Binance crypto 24/7. When India shuts Friday 15:30 IST, crypto, FX, and commodities keep the book working until Monday 09:15. Live stays off.</p>
-    <div class="inline">
+    <div class="inline" id="desk-actions">
       <form method="post" action="/desk/seed">
         <button class="btn primary" type="submit">Seed demo desk</button>
       </form>
@@ -28,7 +28,7 @@
   </div>
 </section>
 
-<article class="panel">
+<article class="panel" id="panel-paper-auto">
   <h2>Paper auto</h2>
   <p class="figure">{{ 'ON' if auto_on else 'OFF' }}</p>
   <p class="meta">
@@ -41,7 +41,7 @@
 </article>
 
 <div class="grid-2">
-  <article class="panel">
+  <article class="panel" id="panel-paper-book">
     <h2>Paper book</h2>
     {% if paper %}
     <p class="figure">{{ paper.equity | inr }}</p>
@@ -51,7 +51,7 @@
     {% endif %}
     {% endif %}
   </article>
-  <article class="panel">
+  <article class="panel" id="panel-live-book">
     <h2>Live book</h2>
     {% if live %}
     <p class="figure">{{ live.equity | inr }}</p>
@@ -63,7 +63,17 @@
   </article>
 </div>
 
-<article class="panel">
+<article class="panel" id="panel-equity-curve">
+  <h2>Paper equity vs. peak</h2>
+  {% if paper_dd %}
+  <p class="figure {{ 'down' if paper_dd.drawdown > 0.005 else '' }}">{{ '%.1f'|format(paper_dd.drawdown * 100) }}%</p>
+  <p class="meta">Current drawdown from peak · Peak <span class="num">{{ paper_dd.peak | inr }}</span> · Equity <span class="num">{{ paper_dd.equity | inr }}</span></p>
+  {% endif %}
+  <div class="chart-box chart-box-sm" data-equity-curve data-height="220"></div>
+  <p class="meta">Gold = equity. Dashed line = running peak. Shaded gap = drawdown from peak — the fastest "is the book okay" glance on this page.</p>
+</article>
+
+<article class="panel" id="panel-open-clips">
   <h2>Open clips</h2>
   <table>
     <thead><tr><th>Venue</th><th>Name</th><th>Side</th><th>Qty</th><th>Avg buy</th><th>Current</th><th>Fees</th><th>Open P&amp;L</th><th>Market</th></tr></thead>
@@ -71,7 +81,7 @@
     {% for p in positions %}
       <tr>
         <td>{{ p.venue }}</td>
-        <td>{{ p.symbol }}</td>
+        <td>{{ p.symbol }}{% if p.price_quality == 'fx_fallback' %} <span class="flag" title="Marked through the USDINR fallback rate, not a live cross-rate">fx est.</span>{% endif %}</td>
         <td>{{ p.side }}</td>
         <td class="num">{{ p.qty }}</td>
         <td class="num">{{ p.avg_buy | inr }}</td>
@@ -87,14 +97,14 @@
   </table>
 </article>
 
-<article class="panel">
+<article class="panel" id="panel-latest-decisions">
   <h2>Latest decisions</h2>
   <table>
     <thead><tr><th>Name</th><th>Side</th><th>Conf</th><th>Confluence</th><th>Paper</th><th>Live</th></tr></thead>
     <tbody>
     {% for s in signals %}
       <tr>
-        <td><a href="/chart?symbol={{ s.symbol }}">{{ s.symbol }}</a></td>
+        <td><a href="/chart?symbol={{ s.symbol }}" title="{{ s.reason }}">{{ s.symbol }}</a></td>
         <td>{{ s.side }}</td>
         <td class="num">{{ '%.0f'|format(s.confidence * 100) }}</td>
         <td class="num">{{ '%.0f'|format(s.confluence) }}</td>

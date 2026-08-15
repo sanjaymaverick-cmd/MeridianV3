@@ -8,6 +8,19 @@
     <p class="lede">Daily PnL is time. Gamma Scalping PnL is the extra from a move. Long gamma can help. Short gamma can hurt. This page is a review (not an order).</p>
   </div>
 </section>
+
+<article class="panel">
+  <form class="inline" method="get" action="/review">
+    <label>Name <input name="symbol" value="{{ symbol }}" list="review-symbol-options" autocomplete="off"></label>
+    <button class="btn primary" type="submit">Open</button>
+  </form>
+  <datalist id="review-symbol-options">
+    {% for sym in active_symbols %}
+    <option value="{{ sym }}"></option>
+    {% endfor %}
+  </datalist>
+  <p class="meta">Pick from the active watchlist, or type any other name.</p>
+</article>
 <article class="panel">
   <h2>{{ symbol }} review</h2>
   <div id="review-root" data-symbol="{{ symbol }}">Loading the review…</div>

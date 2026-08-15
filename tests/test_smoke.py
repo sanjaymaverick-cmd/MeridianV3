@@ -52,6 +52,37 @@ def test_seed_post_shows_notice(session):
     assert b"Paper auto" in res.content or b"Paper fills" in res.content
 
 
+def test_desk_cycle_notice_reflects_actual_live_armed_state(session):
+    """2.7 — the notice used to hardcode "Live stays disarmed." no matter
+    what run_cycle actually returned (F13). It must track the real state."""
+    from urllib.parse import parse_qs, urlparse
+
+    from sqlalchemy import select
+
+    from meridian_v3.app import create_app
+    from meridian_v3.storage.schema import AccountState
+
+    seed_demo(session, reset=True)
+    session.commit()
+    client = TestClient(create_app())
+
+    res = client.post("/desk/cycle", follow_redirects=False)
+    assert res.status_code == 303
+    notice = parse_qs(urlparse(res.headers["location"]).query)["notice"][0]
+    assert "Live stays disarmed." in notice
+    assert "Live is armed" not in notice
+
+    live = session.scalar(select(AccountState).where(AccountState.venue == "live"))
+    live.live_armed = 1
+    session.commit()
+
+    res2 = client.post("/desk/cycle", follow_redirects=False)
+    assert res2.status_code == 303
+    notice2 = parse_qs(urlparse(res2.headers["location"]).query)["notice"][0]
+    assert "Live is armed — clips can go live." in notice2
+    assert "Live stays disarmed." not in notice2
+
+
 def test_broker_picker_and_book_shows_charges(session):
     seed_demo(session, reset=True)
     session.commit()

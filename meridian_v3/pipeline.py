@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from loguru import logger
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from meridian_v3.alerts.notify import emit_alert
 from meridian_v3.capital.sizer import size_position
 from meridian_v3.config import get_settings
 from meridian_v3.decision.engine import DecisionInput, decide
@@ -15,11 +17,13 @@ from meridian_v3.engine.bayesian import BetaBelief, update_belief
 from meridian_v3.engine.confluence import FactorVote
 from meridian_v3.engine.drawdown import assess_drawdown
 from meridian_v3.engine.edge import estimate_equity_costs
-from meridian_v3.engine.meta_label import primary_direction, rsi
+from meridian_v3.engine.meta_label import OnlineLogit, primary_direction, rsi
+from meridian_v3.engine.walkforward import Robustness, hit_rate, robustness, walk_forward_folds
 from meridian_v3.execution.brokers.paper_broker import PaperBroker
 from meridian_v3.execution.oms import OrderManager
-from meridian_v3.router.calendar import india_session, is_india_market
+from meridian_v3.router.calendar import IST, india_session, is_india_market
 from meridian_v3.router.markets import market_for
+from meridian_v3.scoring.composite import blend_weights, composite_score, factor_parts_from_tape, map_action
 from meridian_v3.signals.engines import evaluate_signals
 from meridian_v3.storage.schema import (
     AccountState,
@@ -27,6 +31,7 @@ from meridian_v3.storage.schema import (
     DeskEvent,
     EquityPoint,
     FactorScore,
+    LogitWeight,
     Position,
     PriceBar,
     PriceCache,
@@ -35,8 +40,21 @@ from meridian_v3.storage.schema import (
     WatchItem,
 )
 
+# Feature row name for the online logistic's intercept — kept distinct from
+# any real feature key (see engine/meta_label.py:default_features).
+_LOGIT_BIAS = "__bias__"
+
 
 def _belief(session: Session, rule: str) -> BetaBelief:
+    """Look up the Beta belief for ``rule``.
+
+    Part 3 item 4 — ``run_cycle`` now calls this with the routed *market*
+    (``equity_cash``, ``crypto_spot``, ...) instead of the single global
+    ``"core"`` rule name, so each market keeps its own prior instead of all
+    of them sharing one Beta(alpha, beta) blended across every asset class.
+    A market with no row yet gets the same Beta(4.0, 4.0) cold-start prior
+    ``"core"`` always used — there is no backfill from the old shared row.
+    """
     row = session.scalar(select(BeliefRow).where(BeliefRow.rule_name == rule))
     if row is None:
         return BetaBelief(4.0, 4.0, 0, 0)
@@ -62,6 +80,232 @@ def persist_belief(session: Session, won: bool, rule: str = "core") -> BetaBelie
     row.wins = belief.wins
     row.losses = belief.losses
     return belief
+
+
+def _market_robustness(session: Session, market: str, settings) -> Robustness:
+    """Part 3 item 5 — walk-forward robustness verdict for one market.
+
+    Walks the time-ordered realized P&L of that market's *closed paper*
+    positions (``venue="paper", status="closed"``; rows with no honest
+    ``realized_pnl`` — e.g. Phase 0's ``status="unreconciled"`` repairs —
+    are excluded by construction since they never reach ``status="closed"``
+    with a non-null P&L). ``hit_rate`` is the per-fold score
+    (``engine/walkforward.py``), folds come from ``walk_forward_folds``'s
+    own defaults (train=60, test=20, embargo=2), and the final verdict is
+    ``robustness(is_scores, oos_scores, max_gap=settings.decision.walkforward_oos_gap_max)``.
+
+    A market with fewer than ``train + embargo + test`` (82 by default)
+    closed positions produces zero folds; ``robustness([], [], ...)``
+    already returns a conservative ``robust=False`` ("Not enough
+    walk-forward folds.") for that case rather than this function inventing
+    a lower-data fallback.
+    """
+    pnls = list(
+        session.scalars(
+            select(Position.realized_pnl)
+            .where(
+                Position.venue == "paper",
+                Position.status == "closed",
+                Position.market == market,
+                Position.realized_pnl.is_not(None),
+            )
+            .order_by(Position.closed_at.asc())
+        )
+    )
+    folds = walk_forward_folds(len(pnls))
+    is_scores = [hit_rate(pnls[f.train_start : f.train_end]) for f in folds]
+    oos_scores = [hit_rate(pnls[f.test_start : f.test_end]) for f in folds]
+    return robustness(is_scores, oos_scores, max_gap=settings.decision.walkforward_oos_gap_max)
+
+
+def load_logit(session: Session, rule: str = "core") -> OnlineLogit:
+    """Rebuild the online logistic from its persisted weights (1.1).
+
+    An untrained (``updates == 0``) model falls back to the fixed cold-start
+    formula in ``engine/meta_label.py`` — same behaviour as before this was
+    wired up, just no longer stuck there forever once real outcomes land.
+    """
+    rows = list(session.scalars(select(LogitWeight).where(LogitWeight.rule_name == rule)))
+    model = OnlineLogit()
+    updates = 0
+    for row in rows:
+        updates = max(updates, row.updates)
+        if row.feature == _LOGIT_BIAS:
+            model.bias = row.weight
+        else:
+            model.weights[row.feature] = row.weight
+    model.updates = updates
+    return model
+
+
+def persist_logit_update(
+    session: Session, features: dict[str, float], won: bool, rule: str = "core"
+) -> OnlineLogit:
+    """Load the persisted logistic, call ``.update()`` on a real outcome, save it back.
+
+    Called from the same place ``persist_belief`` is — a paper clip closing —
+    so the meta-label logistic actually learns from the book instead of
+    computing a brand-new, zero-``updates`` instance on every decision (F4).
+    """
+    model = load_logit(session, rule)
+    model.update(features, won)
+    bias_row = session.scalar(
+        select(LogitWeight).where(LogitWeight.rule_name == rule, LogitWeight.feature == _LOGIT_BIAS)
+    )
+    if bias_row is None:
+        session.add(LogitWeight(rule_name=rule, feature=_LOGIT_BIAS, weight=model.bias, updates=model.updates))
+    else:
+        bias_row.weight = model.bias
+        bias_row.updates = model.updates
+    for key, value in model.weights.items():
+        row = session.scalar(select(LogitWeight).where(LogitWeight.rule_name == rule, LogitWeight.feature == key))
+        if row is None:
+            session.add(LogitWeight(rule_name=rule, feature=key, weight=value, updates=model.updates))
+        else:
+            row.weight = value
+            row.updates = model.updates
+    session.flush()
+    return model
+
+
+def _score_symbol(
+    session: Session,
+    symbol: str,
+    cache: PriceCache,
+    desk_mood: str,
+    rsi_value: float | None,
+    now: datetime,
+) -> float:
+    """Compute and persist a real V1 five-factor row for this symbol (1.2).
+
+    Only ``technical`` and ``valuation`` have a live data source (the tape in
+    ``price_cache``) — ``composite_score`` skips the ``quality``/``ownership``/
+    ``sentiment`` factors we have no fundamentals feed for, rather than us
+    faking numbers for them.
+    """
+    parts = factor_parts_from_tape(
+        last=cache.last,
+        sma20=cache.sma20,
+        sma50=cache.sma50,
+        high20=cache.high20,
+        low20=cache.low20,
+        rsi_value=rsi_value,
+    )
+    weights = blend_weights(desk_mood)
+    composite = composite_score(parts, weights)
+    action = map_action(composite, desk_mood)
+    session.add(
+        FactorScore(
+            symbol=symbol,
+            quality=parts.get("quality"),
+            valuation=parts.get("valuation"),
+            technical=parts.get("technical"),
+            ownership=parts.get("ownership"),
+            sentiment=parts.get("sentiment"),
+            composite=float(composite) if composite is not None else None,
+            action=action,
+            as_of=now,
+        )
+    )
+    return float(composite) if composite is not None else 6.5
+
+
+def _reentry_blocked(
+    session: Session, symbol: str, confidence: float, now: datetime, settings
+) -> str | None:
+    """2.5 — live enforcement of the re-entry cooldown (F16).
+
+    ``reentry_sec`` used to only exist as a post-hoc training feature in
+    ``build_meta_labels.py`` — nothing stopped the live cycle from reopening
+    the same symbol on back-to-back cycles once its last clip closed, paying
+    brokerage + GST again each time. This blocks that, unless the new
+    signal is materially more confident than the one that closed the last
+    clip (so a genuine regime change isn't stuck waiting out the clock).
+
+    Returns a hold reason string when re-entry should wait, or ``None`` when
+    it's fine to open (no recent close, cooldown has elapsed, or confidence
+    cleared the margin).
+    """
+    cooldown = settings.decision.reentry_cooldown_sec
+    if cooldown <= 0:
+        return None
+    last_closed = session.scalar(
+        select(Position)
+        .where(Position.venue == "paper", Position.symbol == symbol, Position.status == "closed")
+        .order_by(Position.closed_at.desc())
+    )
+    if last_closed is None or last_closed.closed_at is None:
+        return None
+    elapsed = (now - last_closed.closed_at).total_seconds()
+    if elapsed >= cooldown:
+        return None
+    prior_confidence = float(last_closed.opened_confidence or 0.0)
+    if confidence >= prior_confidence + settings.decision.reentry_confidence_margin:
+        return None
+    return (
+        f"{symbol} closed {elapsed:.0f}s ago — inside the {cooldown:.0f}s re-entry cooldown. "
+        f"Confidence {confidence:.0%} is not materially higher than the {prior_confidence:.0%} "
+        "that closed. Holding rather than paying fees to reopen it."
+    )
+
+
+def _day_start_equity(session: Session, venue: str, now: datetime) -> float:
+    """Equity for ``venue`` at the start of the current IST trading day (Part 3 item 3).
+
+    Used to compute "loss so far today" for the rupee-per-day kill switch.
+    IST, not UTC midnight, is the day boundary — this is an India-hours desk
+    and the rest of the codebase (``router/calendar.py``) already reasons
+    about "today" the same way.
+
+    Three cases, in order:
+      1. Today (IST) already has an ``EquityPoint`` for this venue — use the
+         earliest one (the mark closest to today's open).
+      2. Today has none yet (e.g. first cycle of the day) — fall back to the
+         most recent ``EquityPoint`` strictly before today (yesterday's last
+         snapshot).
+      3. No history at all — fall back to the account's current equity, i.e.
+         "loss so far today" is 0 until there is something to compare against.
+    """
+    aware = now if now.tzinfo is not None else now.replace(tzinfo=timezone.utc)
+    local = aware.astimezone(IST)
+    ist_midnight = local.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_start_utc = ist_midnight.astimezone(timezone.utc).replace(tzinfo=None)
+
+    today_point = session.scalar(
+        select(EquityPoint)
+        .where(EquityPoint.venue == venue, EquityPoint.as_of >= day_start_utc)
+        .order_by(EquityPoint.as_of.asc())
+    )
+    if today_point is not None:
+        return float(today_point.equity)
+
+    prior_point = session.scalar(
+        select(EquityPoint)
+        .where(EquityPoint.venue == venue, EquityPoint.as_of < day_start_utc)
+        .order_by(EquityPoint.as_of.desc())
+    )
+    if prior_point is not None:
+        return float(prior_point.equity)
+
+    return float(_account(session, venue).equity)
+
+
+def alert_on_drawdown_transition(session: Session, acct: AccountState, dd) -> None:
+    """Part 3 item 6 — fire the drawdown-pause alert once per pause episode.
+
+    ``assess_drawdown()`` is a stateless pure function recomputed every
+    cycle, so telling "just entered pause" apart from "still paused from
+    last cycle" needs its own edge-detection: alert (and latch
+    ``live_pause_alerted``) the first cycle a venue enters pause, stay quiet
+    on every subsequent still-paused cycle, and reset the latch once the
+    venue recovers so a later pause alerts again instead of going silent
+    forever after the first episode.
+    """
+    if dd.live_paused and not acct.live_pause_alerted:
+        emit_alert(session, "drawdown_pause", f"{acct.venue} account: {dd.reason}")
+        acct.live_pause_alerted = 1
+    elif not dd.live_paused and acct.live_pause_alerted:
+        acct.live_pause_alerted = 0
 
 
 def mark_to_market(session: Session, venue: str = "paper") -> float:
@@ -99,6 +343,14 @@ def run_cycle(
     desk_mood = regime.desk if regime else "Elevated"
     paper_dd = assess_drawdown(paper_acct.equity, paper_acct.peak)
     live_dd = assess_drawdown(live_acct.equity, live_acct.peak)
+    alert_on_drawdown_transition(session, paper_acct, paper_dd)
+    alert_on_drawdown_transition(session, live_acct, live_dd)
+    # Part 3 item 3 — computed once per cycle, same as paper_dd/live_dd above,
+    # rather than threading a Session into safety/guards.py.
+    paper_day_start = _day_start_equity(session, "paper", now)
+    live_day_start = _day_start_equity(session, "live", now)
+    paper_daily_loss = max(0.0, paper_day_start - paper_acct.equity)
+    live_daily_loss = max(0.0, live_day_start - live_acct.equity)
 
     live_today = session.scalar(
         select(func.count(SignalRow.id)).where(SignalRow.live == 1, SignalRow.created_at >= now.replace(hour=0, minute=0))
@@ -107,14 +359,36 @@ def run_cycle(
         select(func.count(Position.id)).where(Position.venue == "paper", Position.status == "open")
     ) or 0
 
+    # 2.6 — the only record of what a cycle did used to be a DeskEvent row
+    # per symbol; nothing summarized it anywhere an operator could grep.
+    logger.info("run_cycle start: live_armed={} open_paper={}", armed, open_paper)
+
     broker = PaperBroker(cash=paper_acct.cash)
     oms = OrderManager(session, broker)
+    # 1.1 — load the persisted online logistic once per cycle so every
+    # decision this cycle scores against the same, real, trained weights
+    # (instead of a brand-new zero-`updates` OnlineLogit every call).
+    logit_model = load_logit(session, "core")
     opened = 0
     decided = 0
     holds = 0
     paper_clips: list[str] = []
     skipped_no_tape = 0
     ranked: list[tuple[float, object, object]] = []
+
+    # Part 3 item 5 — walk-forward robustness is scoped per market (same
+    # granularity as the item-4 belief split, just below) and involves a DB
+    # query plus a walk-forward computation, so it is computed at most once
+    # per distinct market this cycle (<= 8 possible markets), not once per
+    # watchlist symbol, and cached here for the rest of this call.
+    robustness_cache: dict[str, Robustness] = {}
+
+    def _cached_robustness(market: str) -> Robustness:
+        cached = robustness_cache.get(market)
+        if cached is None:
+            cached = _market_robustness(session, market, settings)
+            robustness_cache[market] = cached
+        return cached
 
     names = list(session.scalars(select(WatchItem).where(WatchItem.status == "active")))
     for item in names:
@@ -131,10 +405,10 @@ def run_cycle(
         highs = [b.high for b in bars]
         lows = [b.low for b in bars]
         atr = cache.atr or average_true_range(highs, lows, closes, 14)
-        score_row = session.scalar(
-            select(FactorScore).where(FactorScore.symbol == item.symbol).order_by(FactorScore.as_of.desc())
-        )
-        score = score_row.composite if score_row else 6.5
+        rsi_value = rsi(closes) if closes else None
+        # 1.2 — write a real V1 five-factor row every cycle instead of reading
+        # the dead `factor_scores` table (which nothing ever inserted into).
+        score = _score_symbol(session, item.symbol, cache, desk_mood, rsi_value, now)
         raws = evaluate_signals(
             symbol=item.symbol,
             asset_class=item.asset_class,
@@ -157,7 +431,7 @@ def run_cycle(
             last=cache.last,
             sma_fast=cache.sma20,
             sma_slow=cache.sma50,
-            rsi=rsi(closes) if closes else None,
+            rsi=rsi_value,
             breakout=any(r.rule_name == "breakout_volume" for r in raws),
             mean_revert=any(r.rule_name == "mean_reversion_bands" and r.side == "buy" for r in raws),
             regime=desk_mood,
@@ -177,6 +451,11 @@ def run_cycle(
                 Position.status == "open",
             )
         )
+        # Part 3 items 4/5 — the routed market is resolved once here and
+        # reused for the belief key, the robustness cache lookup, and
+        # `preferred_market` itself, so all three agree on exactly the same
+        # market a symbol was scored against.
+        market = market_for(item.asset_class, item.symbol)
         decision = decide(
             DecisionInput(
                 symbol=item.symbol,
@@ -192,18 +471,15 @@ def run_cycle(
                 equity=paper_acct.equity,
                 cash=paper_acct.cash,
                 drawdown=live_dd if armed else paper_dd,
+                daily_loss_inr=live_daily_loss if armed else paper_daily_loss,
                 live_armed=armed,
                 live_today=int(live_today),
                 open_count=int(open_paper),
-                equity_score=70 if item.asset_class == "equity" else 40,
-                options_score=70 if item.asset_class in {"option", "index"} or item.symbol.endswith(".C") else 20,
-                forex_score=72 if item.asset_class == "fx" else 15,
-                crypto_score=75 if "crypto" in item.asset_class or item.symbol.endswith("USDT") or ".USDT" in item.symbol else 15,
-                futures_score=72 if item.asset_class in {"future", "crypto_futures"} or item.symbol.endswith(".F") else 15,
-                commodity_score=74 if item.symbol.endswith(".X") else 15,
-                preferred_market=market_for(item.asset_class, item.symbol),
+                preferred_market=market,
                 now=now,
-                belief=_belief(session, "core"),
+                belief=_belief(session, market),
+                logit=logit_model,
+                robustness=_cached_robustness(market),
                 held_qty=held.qty if held else 0.0,
             ),
             settings,
@@ -215,6 +491,14 @@ def run_cycle(
                 "Indian market is shut until Monday 09:15 IST. "
                 "No new India paper — cash stays free for crypto, FX, and commodities."
             )
+        if decision.paper and held is None:
+            # 2.5 — a symbol that just closed shouldn't reopen (and pay fees
+            # again) within its cooldown window unless this signal is
+            # materially more confident than the one that closed it (F16).
+            cooldown_reason = _reentry_blocked(session, item.symbol, decision.confidence, now, settings)
+            if cooldown_reason:
+                decision.paper = False
+                decision.reasons.append(cooldown_reason)
         session.add(
             SignalRow(
                 symbol=item.symbol,
@@ -284,6 +568,10 @@ def run_cycle(
     session.add(EquityPoint(venue="paper", as_of=now, equity=paper_acct.equity, cash=paper_acct.cash, peak=paper_acct.peak))
     session.add(EquityPoint(venue="live", as_of=now, equity=live_acct.equity, cash=live_acct.cash, peak=live_acct.peak))
     session.flush()
+    logger.info(
+        "run_cycle end: decided={} paper_opened={} holds={} skipped_no_tape={}",
+        decided, opened, holds, skipped_no_tape,
+    )
     return {
         "decided": decided,
         "paper_opened": opened,

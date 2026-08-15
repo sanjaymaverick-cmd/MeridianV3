@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from meridian_v3.alerts.notify import emit_alert
 from meridian_v3.capital.sizer import stop_price
 from meridian_v3.config import get_settings
 from meridian_v3.storage.schema import AccountState, Fill, Position, PriceCache
+
+# Part 3 item 6 — a repair fixing 1-3 rows on a normal boot isn't
+# alert-worthy; a repair fixing dozens is worth flagging to the operator.
+_LARGE_REPAIR_ALERT_THRESHOLD = 3
 
 
 def repair_margin_priced_clips(session: Session) -> int:
@@ -17,7 +23,14 @@ def repair_margin_priced_clips(session: Session) -> int:
     margin in notional, so GOLD.X showed ₹42,364 vs ₹4,23,642 and every
     silver short "stopped out" a minute later.
     """
-    return repair_shifted_clips(session)
+    fixed = repair_shifted_clips(session)
+    # 2.6 — a repair that actually touched rows is worth a log line; a
+    # clean boot (fixed == 0, the common case) stays quiet.
+    if fixed:
+        logger.info("repair_margin_priced_clips: fixed {} row(s)", fixed)
+    if fixed > _LARGE_REPAIR_ALERT_THRESHOLD:
+        emit_alert(session, "large_repair_run", f"Repair changed {fixed} row(s) — check the book.")
+    return fixed
 
 
 def align_prices(entry: float, other: float, market: str | None = None) -> tuple[float, float, float | None]:
@@ -41,10 +54,18 @@ def align_prices(entry: float, other: float, market: str | None = None) -> tuple
 
 
 def repair_shifted_clips(session: Session) -> int:
+    settings = get_settings()
     paper = session.scalar(select(AccountState).where(AccountState.venue == "paper"))
     rows = list(session.scalars(select(Position).where(Position.venue == "paper")))
     fixed = 0
     for pos in rows:
+        # A closed clip with no exit_price has nothing honest to align against.
+        # Never rewrite avg_price against today's mark: reconstruct the exit
+        # from the real matching fill, or flag the row unreconciled.
+        if pos.status == "closed" and pos.exit_price is None:
+            if _reconcile_closed_without_exit(session, pos):
+                fixed += 1
+            continue
         mark = _mark_for(session, pos)
         avg = float(pos.avg_price or 0.0)
         new_avg, new_mark, scale = align_prices(avg, mark, pos.market)
@@ -54,7 +75,7 @@ def repair_shifted_clips(session: Session) -> int:
         pos.avg_price = new_avg
         if pos.status == "closed" and pos.exit_price and abs(new_mark - float(pos.exit_price)) > 0.01:
             pos.exit_price = new_mark
-        pos.stop = stop_price(pos.side, new_avg, float(pos.stop or 0.0))
+        pos.stop = stop_price(pos.side, new_avg, float(pos.stop or 0.0), settings)
         new_pnl = None
         if pos.status == "closed" and pos.exit_price:
             qty = float(pos.close_qty or 0.0) or _qty_from_fills(session, pos)
@@ -76,8 +97,46 @@ def repair_shifted_clips(session: Session) -> int:
     return fixed
 
 
+def _reconcile_closed_without_exit(session: Session, pos: Position) -> bool:
+    """Give a closed-but-exit-less clip an honest exit, or flag it.
+
+    Looks up the matching exit ``Fill`` (same approach ``book_view._infer_exit``
+    uses) and reconstructs ``exit_price`` / ``realized_pnl`` / ``close_qty``
+    from it. If no exit fill exists there is nothing to reconcile against, so
+    the row is marked ``status="unreconciled"`` — visibly excluded from equity
+    and training rather than silently rewritten against the current mark.
+
+    Idempotent: once ``exit_price`` is set (or the row is flagged) a second
+    run of :func:`repair_shifted_clips` no longer enters this branch.
+    """
+    exit_side = "sell" if pos.side == "buy" else "buy"
+    fill = session.scalar(
+        select(Fill)
+        .where(Fill.symbol == pos.symbol, Fill.venue == pos.venue, Fill.side == exit_side)
+        .order_by(Fill.filled_at.desc())
+    )
+    if fill is None:
+        pos.status = "unreconciled"
+        return True
+    exit_price = float(fill.price or 0.0)
+    if exit_price <= 0:
+        pos.status = "unreconciled"
+        return True
+    qty = float(pos.close_qty or 0.0) or float(pos.qty or 0.0) or float(fill.qty or 0.0)
+    avg = float(pos.avg_price or 0.0)
+    raw = (exit_price - avg) * qty
+    if pos.side == "sell":
+        raw = -raw
+    pos.exit_price = exit_price
+    pos.realized_pnl = raw - _fees_for(session, pos)
+    if not pos.close_qty and qty:
+        pos.close_qty = qty
+    return True
+
+
 def _normalize_open_stops(session: Session) -> int:
     """Turn leftover ATR distances on open clips into price lines."""
+    settings = get_settings()
     n = 0
     rows = list(
         session.scalars(select(Position).where(Position.venue == "paper", Position.status == "open"))
@@ -85,7 +144,7 @@ def _normalize_open_stops(session: Session) -> int:
     for pos in rows:
         if not pos.stop or not pos.avg_price:
             continue
-        line = stop_price(pos.side, float(pos.avg_price), float(pos.stop))
+        line = stop_price(pos.side, float(pos.avg_price), float(pos.stop), settings)
         if abs(line - float(pos.stop)) > 0.01:
             pos.stop = line
             n += 1
@@ -161,6 +220,14 @@ def _scale_fills(
     *,
     new_pnl: float | None,
 ) -> None:
+    """Correct shifted fills without touching the original ``note`` (2.4).
+
+    ``note`` is the ticket exactly as written the moment the fill happened —
+    the fill journal is append-only, so it stays untouched here even when
+    the repair is correcting it. What changed goes to ``correction_note``
+    instead, so a reviewer can see both what was originally recorded and
+    what the repair fixed, rather than a note silently rewritten in place.
+    """
     fills = list(
         session.scalars(
             select(Fill).where(Fill.symbol == pos.symbol, Fill.venue == pos.venue)
@@ -170,27 +237,18 @@ def _scale_fills(
         old = float(fill.price or 0.0)
         if fill.side == pos.side and old and _looks_shifted(old, mark, scale):
             fill.price = old * scale
-            fill.note = _rewrite_price(fill.note, old, fill.price)
+            fill.correction_note = _append_correction(
+                fill.correction_note,
+                f"Repair: price corrected from ₹{old:,.2f} to ₹{fill.price:,.2f} "
+                f"(x{scale:g} decimal-slide fix).",
+            )
         if new_pnl is not None and fill.side != pos.side:
-            fill.note = _rewrite_pnl(fill.note, new_pnl)
+            fill.correction_note = _append_correction(
+                fill.correction_note,
+                f"Repair: realized P&L corrected to ₹{new_pnl:,.0f}.",
+            )
 
 
-def _rewrite_price(note: str, old: float, new: float) -> str:
-    if not note:
-        return note
-    for fmt in (f"{old:,.2f}", f"{old:.2f}"):
-        if fmt in note:
-            return note.replace(fmt, f"{new:,.2f}", 1)
-    return note
-
-
-def _rewrite_pnl(note: str, pnl: float) -> str:
-    if not note or "P&L" not in note:
-        return note
-    head, _, tail = note.partition("P&L")
-    rest = tail
-    if " after" in rest:
-        rest = " after" + rest.split(" after", 1)[1]
-    else:
-        rest = ""
-    return f"{head}P&L ₹{pnl:,.0f}{rest}"
+def _append_correction(existing: str, message: str) -> str:
+    existing = existing or ""
+    return f"{existing} {message}".strip()

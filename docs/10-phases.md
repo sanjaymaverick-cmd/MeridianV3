@@ -4,7 +4,7 @@ The repository already contains a working Phase 1–3 spine. This is the recomme
 
 ## Phase 1 — Desk that cannot hurt you (now)
 
-- Seed ₹5,000 paper + live books (live disarmed)
+- Seed ₹50,000 paper + live books (live disarmed)
 - V1 score + V2 Greeks/reviews/charts
 - Auto decision → **paper only**
 - Import CSV / XLSX / PDF with preview
@@ -24,8 +24,8 @@ The repository already contains a working Phase 1–3 spine. This is the recomme
 
 - One real broker adapter (your choice) behind `register_broker`
 - Live arm + hardware-style confirm
-- Kill switch, max rupee loss per day (₹200 default suggestion)
+- Kill switch, max rupee loss per day (₹2,000 default suggestion)
 - Positional 1–3 day path with gap rules
 - Windows package `MERIDIAN-V3`
 
-Do not skip Phase 1 paper time. A ₹5,000 book does not get a second chance at the same speed as a research notebook.
+Do not skip Phase 1 paper time. A ₹50,000 book does not get a second chance at the same speed as a research notebook.

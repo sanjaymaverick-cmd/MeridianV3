@@ -16,9 +16,12 @@ Path resolution (first existing wins):
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import os
 import sqlite3
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -67,6 +70,7 @@ CORE_META_COLS = [
     "fees",
     "atr_source",
     "is_short_hold",
+    "direction",
 ]
 EXTRA_COLS = [
     "gross_pnl",
@@ -229,36 +233,101 @@ def attach_causal_atr(
 
 
 def reconstruct_honest_roundtrips(fills: pd.DataFrame) -> pd.DataFrame:
-    """Pair consecutive buy→sell fills per symbol. Unpaired buys/sells dropped."""
-    rows = []
+    """Pair opening and closing fills per symbol with a position-state stack.
+
+    1.4 (F7 fix): the old version paired fills by naive adjacency — advance
+    two at a time on ``buy`` then ``sell``, one at a time otherwise. That
+    silently dropped every short (``sell`` to open, ``buy`` to cover) and,
+    worse, could mispair an unrelated cover-buy with the *next* open-sell in
+    an interleaved sequence like ``[sell, buy, sell, buy]`` (two back-to-back
+    shorts), fabricating a fictitious round trip out of two fills that never
+    belonged together.
+
+    This version walks each symbol's fills in time order and keeps a stack
+    of still-open lots. A fill on the *same* side as the top of the stack
+    opens a new lot (or the stack starts fresh if it was empty). A fill on
+    the *opposite* side closes lots off the top of the stack (LIFO),
+    matching quantity lot-by-lot, so a cover-buy is only ever paired with
+    the open-sell(s) it is actually closing — never a later, unrelated one.
+    If a closing fill's quantity exceeds everything on the stack, the
+    leftover opens a new lot on the new side (the position flipped).
+
+    Each matched (open-lot, closing-fill) pair is one round trip, tagged
+    ``direction`` = "long" (opened with a buy) or "short" (opened with a
+    sell). ``gross_pnl = (sell_price - buy_price) * qty`` is direction-
+    agnostic — it is simply "the buy fill's price vs. the sell fill's
+    price," which is the right sign for a long (buy low, sell high) and a
+    short (sell high, buy low to cover) alike. Fees are split pro-rata by
+    matched quantity when a fill closes across more than one lot, or an
+    opening fill only partly gets consumed before the stack empties.
+    """
+    rows: list[dict] = []
     for symbol, grp in fills.groupby("symbol", sort=False):
         grp = grp.sort_values("filled_at").reset_index(drop=True)
-        i = 0
-        while i < len(grp) - 1:
-            buy, nxt = grp.loc[i], grp.loc[i + 1]
-            if buy["side"] == "buy" and nxt["side"] == "sell":
-                qty = float(min(buy["qty"], nxt["qty"]))
-                gross = (float(nxt["price"]) - float(buy["price"])) * qty
-                fees = float(buy["fees"]) + float(nxt["fees"])
+        stack: list[dict] = []  # open lots, all on the same side while non-empty
+        for _, fill in grp.iterrows():
+            side = str(fill["side"])
+            qty = float(fill["qty"])
+            if qty <= 1e-9:
+                continue
+            price = float(fill["price"])
+            ts = fill["filled_at"]
+            fees_total = float(fill["fees"])
+            fid = int(fill["id"])
+            remaining = qty
+
+            while remaining > 1e-9 and stack and stack[-1]["side"] != side:
+                lot = stack[-1]
+                matched = min(lot["qty"], remaining)
+                is_long = lot["side"] == "buy"
+                if is_long:
+                    buy_price, buy_time, buy_id = lot["price"], lot["time"], lot["id"]
+                    sell_price, sell_time, sell_id = price, ts, fid
+                else:
+                    buy_price, buy_time, buy_id = price, ts, fid
+                    sell_price, sell_time, sell_id = lot["price"], lot["time"], lot["id"]
+                lot_fee_share = lot["fees"] * (matched / lot["qty"]) if lot["qty"] else 0.0
+                close_fee_share = fees_total * (matched / qty) if qty else 0.0
+                gross = (sell_price - buy_price) * matched
+                total_fees = lot_fee_share + close_fee_share
                 rows.append(
                     {
                         "symbol": symbol,
-                        "buy_fill_id": int(buy["id"]),
-                        "sell_fill_id": int(nxt["id"]),
-                        "buy_time": buy["filled_at"],
-                        "sell_time": nxt["filled_at"],
-                        "buy_price": float(buy["price"]),
-                        "sell_price": float(nxt["price"]),
-                        "qty": qty,
+                        "direction": "long" if is_long else "short",
+                        "buy_fill_id": buy_id,
+                        "sell_fill_id": sell_id,
+                        "buy_time": buy_time,
+                        "sell_time": sell_time,
+                        "buy_price": buy_price,
+                        "sell_price": sell_price,
+                        "qty": matched,
                         "gross_pnl": float(gross),
-                        "fees": fees,
-                        "honest_pnl": float(gross - fees),
-                        "hold_sec": (nxt["filled_at"] - buy["filled_at"]).total_seconds(),
+                        "fees": float(total_fees),
+                        "honest_pnl": float(gross - total_fees),
+                        "entry_time": lot["time"],
+                        "exit_time": ts,
+                        "hold_sec": (ts - lot["time"]).total_seconds(),
                     }
                 )
-                i += 2
-            else:
-                i += 1
+                lot["qty"] -= matched
+                lot["fees"] -= lot_fee_share
+                remaining -= matched
+                if lot["qty"] <= 1e-9:
+                    stack.pop()
+
+            if remaining > 1e-9:
+                # Either the stack was empty (a fresh open), or this fill's
+                # quantity flipped the position after closing everything else.
+                stack.append(
+                    {
+                        "side": side,
+                        "qty": remaining,
+                        "price": price,
+                        "time": ts,
+                        "fees": fees_total * (remaining / qty) if qty else 0.0,
+                        "id": fid,
+                    }
+                )
     return pd.DataFrame(rows)
 
 
@@ -351,9 +420,19 @@ def build_training_set(db_path: Path) -> pd.DataFrame:
     print(f"  → ATR series for {usable['symbol'].nunique()} symbols "
           f"({len(usable)} dated values)")
 
-    print("Reconstructing honest round-trips from fills …")
-    rt = reconstruct_honest_roundtrips(fills)
-    print(f"  → {len(rt)} buy→sell pairs")
+    print("Reconstructing honest round-trips from fills (position-state stack) …")
+    rt_all = reconstruct_honest_roundtrips(fills)
+    n_short = int((rt_all["direction"] == "short").sum()) if not rt_all.empty else 0
+    rt = rt_all[rt_all["direction"] == "long"].reset_index(drop=True) if not rt_all.empty else rt_all
+    print(f"  → {len(rt_all)} round-trip(s) total: {len(rt)} long, {n_short} short")
+    if n_short:
+        print(
+            f"  → {n_short} short round-trip(s) paired correctly (a cover-buy is never "
+            "matched to an unrelated open-sell — F7) but excluded from this training "
+            "pass: attach_nearest_signal below only joins against 'buy' signals, so a "
+            "short's entry (a 'sell' signal) has nothing honest to join against yet. "
+            "Not silently mispaired — explicitly excluded, with this reason printed."
+        )
 
     print("Attaching nearest prior buy signal (2s, fallback 5s) …")
     df = attach_nearest_signal(rt, signals)
@@ -419,7 +498,48 @@ def write_outputs(df: pd.DataFrame, db_path: Path, out_dir: Path) -> dict[str, P
         print(f"Saved script → {script_dst}")
     else:
         written["script"] = src_script
+
+    stamp_path = _write_stamp(df, db_path, out_dir)
+    written["stamp"] = stamp_path
+    print(f"Stamped provenance → {stamp_path}")
     return written
+
+
+def _sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _write_stamp(df: pd.DataFrame, db_path: Path, out_dir: Path) -> Path:
+    """Write a provenance stamp so staleness is detectable automatically.
+
+    Records the source DB hash + row count and the headline metrics, so a
+    reader never has to re-derive by hand whether a CSV was built from the
+    current book (F8). ``STALE.md`` is retired on the first stamped export.
+    """
+    clean = df[df["is_clean"] == 1] if "is_clean" in df.columns else df
+    stamp = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "source_db": db_path.as_posix(),
+        "source_db_sha256": _sha256(db_path),
+        "source_db_bytes": db_path.stat().st_size,
+        "rows_all": int(len(df)),
+        "rows_clean": int(len(clean)),
+        "win_rate_all": float(df["y_binary"].mean()) if len(df) else None,
+        "win_rate_clean": float(clean["y_binary"].mean()) if len(clean) else None,
+        "avg_honest_pnl_all": float(df["honest_pnl"].mean()) if len(df) else None,
+        "avg_honest_pnl_clean": float(clean["honest_pnl"].mean()) if len(clean) else None,
+    }
+    stamp_path = out_dir / "meridian_v3_meta_labels.STAMP.json"
+    stamp_path.write_text(json.dumps(stamp, indent=2), encoding="utf-8")
+
+    stale = out_dir / "STALE.md"
+    if stale.exists():
+        stale.unlink()
+    return stamp_path
 
 
 def print_summary(df: pd.DataFrame) -> None:

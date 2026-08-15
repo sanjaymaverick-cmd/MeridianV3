@@ -10,9 +10,15 @@
 </section>
 <article class="panel">
   <form class="inline" method="get" action="/chart">
-    <label>Name <input name="symbol" value="{{ symbol }}"></label>
+    <label>Name <input name="symbol" value="{{ symbol }}" list="chart-symbol-options" autocomplete="off"></label>
     <button class="btn primary" type="submit">Open</button>
   </form>
+  <datalist id="chart-symbol-options">
+    {% for sym in active_symbols %}
+    <option value="{{ sym }}"></option>
+    {% endfor %}
+  </datalist>
+  <p class="meta">Pick from the active watchlist, or type any other name.</p>
   <div class="chart-box" data-symbol="{{ symbol }}" data-height="420"></div>
   <p class="meta">Green diamond = look at a long / entry · Red diamond = look at a short / exit · Shaded days = a higher-attention window</p>
 </article>

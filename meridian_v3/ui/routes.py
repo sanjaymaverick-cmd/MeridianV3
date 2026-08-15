@@ -7,11 +7,14 @@ from urllib.parse import quote
 from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from loguru import logger
 from sqlalchemy import func, select
 
+from meridian_v3.alerts.notify import emit_alert
 from meridian_v3.config import get_settings
 from meridian_v3.domain.money import format_inr, format_pct
 from meridian_v3.engine.drawdown import assess_drawdown
+from meridian_v3.execution.brokers.plugin import get_live_broker
 from meridian_v3.ingestion.service import ImportService
 from meridian_v3.autopilot import is_running, last_error, set_paper_auto, tick
 from meridian_v3.charges.indian import BROKER_LABELS, BROKERS, broker_label, normalize_broker
@@ -114,12 +117,73 @@ def command(request: Request):
     )
 
 
+def _group_signals_by_symbol(session, window: int = 500) -> list[dict]:
+    """2.C.14 — group recent decisions by symbol with a running tally, so a
+    pattern like "INFY.F opened and closed 43 times today" (Finding F16,
+    re-entry churn) is visible at a glance instead of being 43 separate rows
+    a user has to notice by eye.
+
+    Scoped to the most recent `window` signals (a bounded, PK-ordered SQL
+    query) rather than the whole table, to keep this cheap while still
+    covering "today" in practice for a desk that ticks roughly once a
+    minute. Aggregated in Python rather than SQL `GROUP BY` because the
+    "most common side" tally needs a nested count-per-(symbol, side) that
+    is fiddlier to express as a single aggregate query than to just fold
+    over up to `window` already-fetched rows.
+    """
+    recent = list(session.scalars(select(SignalRow).order_by(SignalRow.id.desc()).limit(window)))
+    groups: dict[str, dict] = {}
+    for row in recent:
+        g = groups.setdefault(
+            row.symbol,
+            {"symbol": row.symbol, "count": 0, "paper": 0, "live": 0, "sides": {}, "last_at": row.created_at},
+        )
+        g["count"] += 1
+        if row.paper:
+            g["paper"] += 1
+        if row.live:
+            g["live"] += 1
+        g["sides"][row.side] = g["sides"].get(row.side, 0) + 1
+        if row.created_at > g["last_at"]:
+            g["last_at"] = row.created_at
+    out = []
+    for g in groups.values():
+        top_side = max(g["sides"].items(), key=lambda kv: kv[1])[0] if g["sides"] else "—"
+        out.append(
+            {
+                "symbol": g["symbol"],
+                "count": g["count"],
+                "paper": g["paper"],
+                "held": g["count"] - g["paper"],
+                "live": g["live"],
+                "top_side": top_side,
+                "last_at": g["last_at"],
+            }
+        )
+    out.sort(key=lambda x: x["count"], reverse=True)
+    return out
+
+
 @router.get("/signals", response_class=HTMLResponse)
-def signals_page(request: Request):
+def signals_page(request: Request, before: int | None = None):
     session = request.state.session
-    rows = list(session.scalars(select(SignalRow).order_by(SignalRow.created_at.desc()).limit(50)))
+    # 2.C.11 — cursor-paginated: `?before=<id>` walks further back in time.
+    # `id` is monotonic with `created_at` (both assigned at insert time), so
+    # ordering/paging on the integer PK is equivalent to paging on the
+    # timestamp but avoids a second index/column comparison.
+    query = select(SignalRow).order_by(SignalRow.id.desc())
+    if before is not None:
+        query = query.where(SignalRow.id < before)
+    page = list(session.scalars(query.limit(51)))
+    has_more = len(page) > 50
+    rows = page[:50]
+    next_cursor = rows[-1].id if has_more and rows else None
     events = list(session.scalars(select(DeskEvent).order_by(DeskEvent.created_at.desc()).limit(20)))
-    return _render(request, "signals.html", "signals", rows=rows, events=events)
+    grouped = _group_signals_by_symbol(session)
+    return _render(
+        request, "signals.html", "signals",
+        rows=rows, events=events, next_cursor=next_cursor, grouped=grouped,
+    )
 
 
 def _account_broker(session) -> str:
@@ -130,7 +194,7 @@ def _account_broker(session) -> str:
 
 
 @router.get("/book", response_class=HTMLResponse)
-def book(request: Request):
+def book(request: Request, before: int | None = None):
     session = request.state.session
     broker = _account_broker(session)
     ensure_fill_charges(session, broker)
@@ -144,34 +208,81 @@ def book(request: Request):
     )
     paper_open = [p for p in paper if p["status"] == "open"]
     paper_done = [p for p in paper if p["status"] == "closed"]
+    # 2.A.3 — a repaired closed clip with no matching exit fill is flagged
+    # `status="unreconciled"` (storage/repair.py) instead of being rewritten
+    # against today's mark. That status matches neither `open` nor `closed`
+    # above, so without this the row simply vanished from the Book page.
+    # Surface it in its own table instead — its exit_price/realized_pnl are
+    # None/unreliable, so it stays out of the normal settled P&L columns.
+    paper_unreconciled = [p for p in paper if p["status"] == "unreconciled"]
     live_open = [p for p in live if p["status"] == "open"]
     live_done = [p for p in live if p["status"] == "closed"]
-    all_fills = list(session.scalars(select(Fill).order_by(Fill.filled_at.desc())))
+    # 2.C.11 — this used to be `select(Fill).order_by(...)` with no `.limit`
+    # at all: the *entire* fills table was loaded into memory and only then
+    # sliced to `[:40]` in Python. Bound the query in SQL instead, with a
+    # `?before=<id>` cursor for "Load more" (id is monotonic with
+    # filled_at, so paging on the integer PK is equivalent and cheaper).
+    fills_query = select(Fill).order_by(Fill.id.desc())
+    if before is not None:
+        fills_query = fills_query.where(Fill.id < before)
+    fills_page = list(session.scalars(fills_query.limit(41)))
+    has_more_fills = len(fills_page) > 40
+    fills_page = fills_page[:40]
+    next_fills_cursor = fills_page[-1].id if has_more_fills and fills_page else None
+    # The "Charges paid" summary is a lifetime total across every fill ever
+    # written, not just this page, so it deliberately keeps its own
+    # full-history query rather than reusing the paginated slice above.
+    all_fills_for_charges = list(session.scalars(select(Fill)))
     return _render(
         request,
         "book.html",
         "book",
         paper_pos=paper_open,
         paper_done=paper_done,
+        paper_unreconciled=paper_unreconciled,
         paper_settled=summarize_closed(paper_done),
         live_pos=live_open,
         live_done=live_done,
         live_settled=summarize_closed(live_done),
-        fills=decorate_fills(all_fills[:40]),
-        charges=summarize_charges(all_fills),
+        fills=decorate_fills(fills_page),
+        next_fills_cursor=next_fills_cursor,
+        charges=summarize_charges(all_fills_for_charges),
         broker=broker,
         broker_label=broker_label(broker),
     )
 
 
+def _active_watch_symbols(session) -> list[str]:
+    """2.C.9 — the symbol-picker datalist on /chart and /review is sourced
+    from the *active* watchlist, matching the filter `pipeline.run_cycle`
+    itself uses (`WatchItem.status == "active"`) rather than every symbol
+    ever added. Rendered server-side into a `<datalist>` so the picker works
+    with zero extra round-trips, matching this app's "server renders, JS
+    enhances" style elsewhere (no new API endpoint needed for this).
+    """
+    return list(
+        session.scalars(
+            select(WatchItem.symbol).where(WatchItem.status == "active").order_by(WatchItem.symbol)
+        )
+    )
+
+
 @router.get("/review", response_class=HTMLResponse)
-def review_page(request: Request):
-    return _render(request, "review.html", "review", symbol="NIFTY")
+def review_page(request: Request, symbol: str = "NIFTY"):
+    session = request.state.session
+    return _render(
+        request, "review.html", "review",
+        symbol=symbol.upper(), active_symbols=_active_watch_symbols(session),
+    )
 
 
 @router.get("/chart", response_class=HTMLResponse)
 def chart_page(request: Request, symbol: str = "RELIANCE"):
-    return _render(request, "chart.html", "chart", symbol=symbol.upper())
+    session = request.state.session
+    return _render(
+        request, "chart.html", "chart",
+        symbol=symbol.upper(), active_symbols=_active_watch_symbols(session),
+    )
 
 
 @router.get("/import", response_class=HTMLResponse)
@@ -228,6 +339,12 @@ def safety_page(request: Request):
     live_dd = assess_drawdown(live.equity, live.peak) if live else None
     paper_dd = assess_drawdown(paper.equity, paper.peak) if paper else None
     broker = _account_broker(session)
+    # 2.A.2 — "Arm live" and "is a broker actually plugged in" used to be two
+    # facts the user couldn't see together. Compute the adapter fact here,
+    # server-side, from the same registry the OMS itself consults
+    # (execution/brokers/plugin.py:get_live_broker) — never guessed in the
+    # template or in JS.
+    live_broker = get_live_broker()
     return _render(
         request,
         "safety.html",
@@ -237,6 +354,7 @@ def safety_page(request: Request):
         broker=broker,
         broker_label=broker_label(broker),
         brokers=[{"id": name, "label": BROKER_LABELS[name]} for name in BROKERS],
+        live_broker_name=live_broker.name if live_broker else None,
     )
 
 
@@ -257,9 +375,13 @@ def desk_cycle(request: Request):
             f"cash ₹{result.get('cash', 0):,.0f}. "
             "Already-held names are not bought again."
         )
+    # 2.7 — this used to hardcode "Live stays disarmed." regardless of the
+    # real live_armed state (F13). Read it from what run_cycle actually
+    # returned instead of asserting a fixed string.
+    live_line = "Live is armed — clips can go live." if result.get("live_armed") else "Live stays disarmed."
     notice = (
         f"Cycle finished. Paper fills: {result['paper_opened']}. "
-        f"Hold: {result.get('holds', 0)}. Live stays disarmed.{extra}"
+        f"Hold: {result.get('holds', 0)}. {live_line}{extra}"
     )
     return RedirectResponse("/?notice=" + _q(notice), status_code=303)
 
@@ -307,6 +429,14 @@ def desk_arm(request: Request, on: str = Form("0")):
     if live:
         live.live_armed = 1 if on == "1" else 0
         live.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        # 2.6 — arming live moves real money once a broker is registered;
+        # a toggle this consequential belongs in the log, not just the DB.
+        logger.info("live arm toggled: live_armed={}", bool(live.live_armed))
+        emit_alert(
+            session,
+            "live_arm_toggled",
+            f"Live trading {'ARMED' if live.live_armed else 'DISARMED'} from the desk UI.",
+        )
         session.commit()
     return RedirectResponse("/safety", status_code=303)
 

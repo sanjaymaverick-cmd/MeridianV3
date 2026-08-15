@@ -15,19 +15,22 @@ Live never starts itself. One click of Seed turns this on.
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 from datetime import datetime, timezone
 
+from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from meridian_v3.config import get_settings
+from meridian_v3.alerts.notify import emit_alert
 from meridian_v3.capital.sizer import stop_price
 from meridian_v3.engine.meta_label import primary_direction, rsi
 from meridian_v3.execution.brokers.paper_broker import PaperBroker
 from meridian_v3.execution.oms import OrderManager
-from meridian_v3.pipeline import mark_to_market, persist_belief, run_cycle
+from meridian_v3.pipeline import mark_to_market, persist_belief, persist_logit_update, run_cycle
 from meridian_v3.router.calendar import (
     INDIA_WEEKEND_FLATTEN,
     coverage_note,
@@ -190,12 +193,17 @@ def manage_exits(
             flatten=flatten,
             session=session,
             weekend_india=weekend_india,
+            settings=settings,
         )
         if not reason:
             continue
+        entry_avg = float(pos.avg_price or 0.0)
         out = oms.close_position(pos, price=last, reason=reason)
         if out.get("ok"):
-            persist_belief(session, won=float(out.get("pnl") or 0) > 0)
+            # A same-mark EOD/weekend flatten with no real move is a cost-only
+            # scratch, not a directional loss — it must not poison the belief.
+            if not _is_costonly_flatten(reason, entry_avg, last, settings):
+                _train_from_close(session, pos, won=float(out.get("pnl") or 0) > 0)
             closed += 1
             symbols.append(pos.symbol)
             if is_india_market(pos.market):
@@ -242,9 +250,11 @@ def flatten_india_paper(
         last = cache.last if cache is not None and cache.last else pos.avg_price
         if not last:
             continue
+        entry_avg = float(pos.avg_price or 0.0)
         out = oms.close_position(pos, price=last, reason=INDIA_WEEKEND_FLATTEN)
         if out.get("ok"):
-            persist_belief(session, won=float(out.get("pnl") or 0) > 0)
+            if not _is_costonly_flatten(INDIA_WEEKEND_FLATTEN, entry_avg, last, settings):
+                _train_from_close(session, pos, won=float(out.get("pnl") or 0) > 0)
             symbols.append(pos.symbol)
     paper = session.scalar(select(AccountState).where(AccountState.venue == "paper"))
     freed = max(0.0, float(paper.cash) - cash_before) if paper is not None else 0.0
@@ -257,6 +267,48 @@ def flatten_india_paper(
     }
 
 
+def _train_from_close(session: Session, pos: Position, won: bool) -> None:
+    """Feed a genuine paper outcome to both trainers (belief + logistic).
+
+    Called from the same two spots the old belief-only training happened —
+    `manage_exits` and `flatten_india_paper` — right after a real (non
+    cost-only) exit. 1.1 wires the online logistic in alongside the Beta
+    belief so `p_success` actually moves as the book closes clips, instead
+    of a fixed cold-start formula forever.
+
+    Part 3 item 4 — the belief is now keyed by ``pos.market`` (the same
+    market column every OMS write site populates from ``decision.market``)
+    instead of the single global ``"core"`` rule, so an equity outcome no
+    longer moves crypto's or futures' belief and vice versa. The online
+    logistic (``persist_logit_update`` below) intentionally still uses the
+    global ``"core"`` rule — only item 4's belief tracking is in scope here.
+    """
+    persist_belief(session, won=won, rule=pos.market or "equity_cash")
+    try:
+        features = json.loads(pos.feature_json or "{}")
+    except (TypeError, ValueError):
+        features = {}
+    if features:
+        persist_logit_update(session, features, won)
+
+
+def _is_costonly_flatten(reason: str, avg: float, exit_mark: float, settings) -> bool:
+    """True for a session-flatten that closed at essentially the same mark.
+
+    Only EOD / weekend flattens qualify — a genuine stop, target, or tape-flip
+    always trains the belief. A flatten where |exit − entry| is within
+    ``execution.flat_scratch_pct`` of entry moved nothing directional; it only
+    paid fees, so it is bucketed as a no-signal scratch and skipped.
+    """
+    is_flatten = reason.startswith("End of day") or reason == INDIA_WEEKEND_FLATTEN
+    if not is_flatten:
+        return False
+    avg = float(avg or 0.0)
+    if avg <= 0:
+        return False
+    return abs(float(exit_mark) - avg) <= avg * settings.execution.flat_scratch_pct
+
+
 def _exit_reason(
     pos: Position,
     last: float,
@@ -265,12 +317,13 @@ def _exit_reason(
     flatten: bool,
     session: Session,
     weekend_india: bool = False,
+    settings=None,
 ) -> str:
     if weekend_india:
         return INDIA_WEEKEND_FLATTEN
     if flatten and (pos.horizon == "intraday" or is_india_market(pos.market)):
         return "End of day — flattening the same-day paper clip."
-    line = stop_price(pos.side, pos.avg_price, pos.stop or 0.0)
+    line = stop_price(pos.side, pos.avg_price, pos.stop or 0.0, settings)
     if pos.side == "buy" and line and last <= line:
         return f"Stop hit at ₹{last:,.2f} (line was ₹{line:,.2f})."
     if pos.side == "sell" and line and last >= line:
@@ -321,6 +374,16 @@ def _loop() -> None:
         except Exception as exc:  # noqa: BLE001 — worker must stay up
             session.rollback()
             _last_error = str(exc)
+            # Part 3 item 6 — the worker's whole point is staying alive, so
+            # alerting about its own failure must never become a second way
+            # for it to die: this gets its own try/except on top of
+            # emit_alert()'s internal webhook guard.
+            try:
+                emit_alert(session, "worker_error", f"Autopilot worker error: {exc}")
+                session.commit()
+            except Exception:  # noqa: BLE001 — alerting must never crash the worker
+                logger.exception("failed to emit worker_error alert")
+                session.rollback()
         finally:
             session.close()
         _stop.wait(max(15, settings.alerts.poll_seconds))

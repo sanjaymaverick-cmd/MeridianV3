@@ -5,6 +5,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timezone
 from io import StringIO
 
+from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -49,7 +50,49 @@ def _history(yf, ticker: str):
         return yf.Ticker(ticker).history(period="6mo", auto_adjust=False)
 
 
-def _apply_frame(session: Session, symbol: str, hist, now: datetime) -> bool:
+def _intraday_frame(yf, ticker: str, settings):
+    """Latest intraday bars for a Yahoo ticker, best-effort across intervals.
+
+    The 6mo daily history still owns ATR / SMA / 20-day range context; this is
+    only used to overlay a *moving* last mark so a same-day paper clip can
+    change between its open and its close (0.6).
+    """
+    quiet = StringIO()
+    logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+    period = settings.providers.intraday_period
+    seen: list[str] = []
+    for interval in (settings.providers.intraday_interval, "1m", "15m"):
+        if interval in seen:
+            continue
+        seen.append(interval)
+        try:
+            with redirect_stdout(quiet), redirect_stderr(quiet):
+                hist = yf.Ticker(ticker).history(period=period, interval=interval, auto_adjust=False)
+        except Exception:
+            hist = None
+        if hist is not None and not getattr(hist, "empty", True):
+            return hist
+    return None
+
+
+def _intraday_last_inr(session: Session, symbol: str, yf, settings) -> tuple[float | None, str | None]:
+    """The most recent intraday close for ``symbol``, converted to rupees.
+
+    Returns ``(price, quality_override)`` — same fallback-flagging contract
+    as ``_to_inr`` (2.2), so an intraday overlay built on the USDINR fallback
+    doesn't silently overwrite an honest "fx_fallback" flag with "intraday".
+    """
+    hist = _intraday_frame(yf, _primary_yahoo(symbol), settings)
+    hist, quality_override = _to_inr(session, symbol, hist)
+    if hist is None or getattr(hist, "empty", True) or "Close" not in hist.columns:
+        return None, quality_override
+    closes = [float(x) for x in hist["Close"].tolist() if x == x]
+    return (closes[-1] if closes else None), quality_override
+
+
+def _apply_frame(
+    session: Session, symbol: str, hist, now: datetime, *, quality_override: str | None = None
+) -> bool:
     if hist is None or getattr(hist, "empty", True):
         return False
     needed = ("Open", "High", "Low", "Close")
@@ -57,14 +100,21 @@ def _apply_frame(session: Session, symbol: str, hist, now: datetime) -> bool:
         return False
     session.query(PriceBar).filter(PriceBar.symbol == symbol).delete()
     for idx, row in hist.iterrows():
+        o, h, l, c = float(row["Open"]), float(row["High"]), float(row["Low"]), float(row["Close"])
+        # A provider can hand back a bar with a real Open/High/Low but a NaN
+        # Close (a genuine, if rare, upstream data gap) — price_bars.close is
+        # NOT NULL, so skip the bar rather than crash the whole refresh over
+        # one bad row. The cache stats below already filter NaN the same way.
+        if o != o or h != h or l != l or c != c:
+            continue
         session.add(
             PriceBar(
                 symbol=symbol,
                 bar_date=idx.date() if hasattr(idx, "date") else idx,
-                open=float(row["Open"]),
-                high=float(row["High"]),
-                low=float(row["Low"]),
-                close=float(row["Close"]),
+                open=o,
+                high=h,
+                low=l,
+                close=c,
                 volume=float(row["Volume"]) if "Volume" in hist.columns else 0.0,
             )
         )
@@ -87,7 +137,9 @@ def _apply_frame(session: Session, symbol: str, hist, now: datetime) -> bool:
     cache.prev_volume = float(hist["Volume"].iloc[-2]) if "Volume" in hist.columns and len(hist) > 1 else cache.volume
     cache.atr = average_true_range(highs, lows, closes, 14)
     cache.as_of = now
-    cache.quality = "live"
+    # 2.2 — a mark built off the hardcoded USDINR fallback is not "live"; it
+    # is honest-but-stale until the real USDINR fetch recovers.
+    cache.quality = quality_override or "live"
     return True
 
 
@@ -179,10 +231,14 @@ class PriceProvider:
                     hist = None
                 if hist is not None and not hist.empty:
                     break
-            hist = _to_inr(self.session, item.symbol, hist)
-            if _apply_frame(self.session, item.symbol, hist, now):
+            hist, quality_override = _to_inr(self.session, item.symbol, hist)
+            if _apply_frame(self.session, item.symbol, hist, now, quality_override=quality_override):
                 marked += 1
                 got.add(item.symbol)
+
+        # Overlay a moving intraday mark on the Yahoo names before derived
+        # clones copy their parent, so futures/options inherit the fresh last.
+        self._overlay_intraday(yf, list(batch) + list(leftovers), now, got)
 
         marked += _refresh_binance(self.session, crypto, now, got)
         marked += _clone_derived(self.session, names, now, got)
@@ -196,7 +252,39 @@ class PriceProvider:
             cache.quality = "missing"
             cache.as_of = now
         self.session.flush()
+        if failed:
+            # 2.6 — a symbol with no live mark this pass is a Hold, not a
+            # crash, but it's still worth a log line so a bad night is
+            # debuggable after the fact.
+            logger.warning("price refresh: {} symbol(s) failed: {}", len(failed), ", ".join(failed))
         return {"marked": marked, "failed": len(failed), "failed_symbols": failed, "applied": marked}
+
+    def _overlay_intraday(self, yf, items, now: datetime, got: set[str]) -> int:
+        """Replace the daily close with the latest intraday mark where we can.
+
+        Best-effort and per-symbol: any failure leaves the honest daily close
+        in place. Only touches names we already marked from Yahoo this pass.
+        """
+        if not self.settings.providers.intraday_marks:
+            return 0
+        n = 0
+        for item in items:
+            if item.symbol not in got:
+                continue
+            try:
+                px, quality_override = _intraday_last_inr(self.session, item.symbol, yf, self.settings)
+            except Exception:
+                px, quality_override = None, None
+            if px is None or px <= 0:
+                continue
+            cache = self.session.scalar(select(PriceCache).where(PriceCache.symbol == item.symbol))
+            if cache is None:
+                continue
+            cache.last = px
+            cache.as_of = now
+            cache.quality = quality_override or "intraday"
+            n += 1
+        return n
 
     def refresh_alt_markets(self) -> dict:
         """Binance + India F&O clones + FX/commodity Yahoo. No full NSE scan."""
@@ -229,8 +317,8 @@ class PriceProvider:
                         hist = None
                     if hist is not None and not hist.empty:
                         break
-                hist = _to_inr(self.session, item.symbol, hist)
-                if _apply_frame(self.session, item.symbol, hist, now):
+                hist, quality_override = _to_inr(self.session, item.symbol, hist)
+                if _apply_frame(self.session, item.symbol, hist, now, quality_override=quality_override):
                     marked += 1
                     got.add(item.symbol)
         self.session.flush()
@@ -264,36 +352,50 @@ def _invert_ohlc_to_inr(hist, usdinr: float):
     return out
 
 
-def _to_inr(session: Session, symbol: str, hist):
-    """Mark global names in rupees so the book never mixes currencies."""
+def _to_inr(session: Session, symbol: str, hist) -> tuple[object, str | None]:
+    """Mark global names in rupees so the book never mixes currencies.
+
+    Returns ``(hist, quality_override)``. ``quality_override`` is
+    ``"fx_fallback"`` whenever the conversion leaned on the hardcoded 83.5
+    USDINR fallback (2.2) instead of a live USDINR cache, so the caller can
+    flag the resulting ``PriceCache`` row rather than mark it "live".
+    """
     if hist is None or getattr(hist, "empty", True):
-        return hist
+        return hist, None
     if is_global_commodity(symbol):
-        return _scale_ohlc(hist, _usdinr(session))
+        fx, is_fallback = _usdinr(session)
+        return _scale_ohlc(hist, fx), ("fx_fallback" if is_fallback else None)
     if not is_fx_symbol(symbol):
-        return hist
+        return hist, None
     kind = fx_quote_kind(symbol)
     if kind == "inr":
-        return hist
-    fx = _usdinr(session)
+        return hist, None
+    fx, is_fallback = _usdinr(session)
+    quality = "fx_fallback" if is_fallback else None
     if kind == "usd_quote":
-        return _scale_ohlc(hist, fx)
+        return _scale_ohlc(hist, fx), quality
     if kind == "usd_base":
-        return _invert_ohlc_to_inr(hist, fx)
-    return hist
+        return _invert_ohlc_to_inr(hist, fx), quality
+    return hist, None
 
 
-def _usdinr(session: Session) -> float:
+def _usdinr(session: Session) -> tuple[float, bool]:
+    """USDINR rupees-per-dollar, and whether it's the hardcoded fallback.
+
+    Every commodity/FX mark built from this rate inherits the same fallback
+    flag (2.2), so a missing or stale USDINR cache can never silently pass
+    as a live cross-rate elsewhere on the book.
+    """
     row = session.scalar(select(PriceCache).where(PriceCache.symbol == "USDINR"))
     if row and row.last and row.last > 50:
-        return float(row.last)
-    return 83.5
+        return float(row.last), False
+    return 83.5, True
 
 
 def _refresh_binance(session: Session, items, now: datetime, got: set[str]) -> int:
     import pandas as pd
 
-    fx = _usdinr(session)
+    fx, _is_fallback = _usdinr(session)
     marked = 0
     roots: dict[str, list] = {}
     for item in items:
