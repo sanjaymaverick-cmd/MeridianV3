@@ -1,4 +1,5 @@
-from datetime import datetime, timezone
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from meridian_v3.config import Settings
 from meridian_v3.decision.engine import DecisionInput, decide
@@ -8,12 +9,24 @@ from meridian_v3.engine.edge import CostEstimate
 from meridian_v3.engine.meta_label import PrimarySignal
 
 
+def _market_open_now():
+    """A fixed Monday inside NSE hours (09:15-15:30 IST).
+
+    These tests used `datetime.now()`, which made them depend on the real
+    wall clock: once new paper entries were blocked in shut sessions
+    (a shut venue has no executable price), the same test passed on a
+    weekday afternoon and failed on a Sunday. Pin the clock so the test
+    exercises the decision logic, not the calendar.
+    """
+    return datetime(2026, 8, 17, 11, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+
+
 def _input(**kwargs):
     base = dict(
         symbol="INFY",
         price=1400,
         atr=20,
-        created_at=datetime.now(timezone.utc),
+        created_at=_market_open_now(),
         primary=PrimarySignal(1, 1.4, "trend is up"),
         votes=[
             FactorVote("trend", 0.8, 1.0, "up"),
@@ -30,7 +43,7 @@ def _input(**kwargs):
         live_armed=False,
         live_today=0,
         open_count=0,
-        now=datetime.now(timezone.utc),
+        now=_market_open_now(),
     )
     base.update(kwargs)
     return DecisionInput(**base)

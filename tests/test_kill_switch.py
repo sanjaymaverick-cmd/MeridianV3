@@ -127,7 +127,10 @@ def _input(**kwargs):
         symbol="INFY",
         price=1400,
         atr=20,
-        created_at=datetime.now(timezone.utc),
+        # Pinned to market hours, like the evaluate_safety tests above: new
+        # paper entries are blocked in a shut session, so a wall-clock
+        # `now()` here made the test's outcome depend on the day it ran.
+        created_at=_market_open_now(),
         primary=PrimarySignal(1, 1.4, "trend is up"),
         votes=[
             FactorVote("trend", 0.8, 1.0, "up"),
@@ -145,7 +148,7 @@ def _input(**kwargs):
         live_today=0,
         open_count=0,
         daily_loss_inr=0.0,
-        now=datetime.now(timezone.utc),
+        now=_market_open_now(),
     )
     base.update(kwargs)
     return DecisionInput(**base)
@@ -232,3 +235,40 @@ def test_run_cycle_opens_no_new_paper_once_daily_loss_cap_is_breached(session):
 
     result = run_cycle(session, live_armed=False, now=now)
     assert result["paper_opened"] == 0
+
+
+def test_a_stop_hit_that_never_moved_is_a_scratch_not_a_loss():
+    """The training label must come from what the price did, not from what
+    the exit reason claims.
+
+    This guard used to fire only for EOD/weekend flattens, on the theory
+    that a stop or target implies real movement. It does not: a stop line
+    computed off a bad mark fires at the entry price, and the close was then
+    recorded as a directional loss despite nothing having happened. Of this
+    book's first 107 closed clips, 101 finished within 0.2% of entry and
+    were trained on as outcomes — which is what taught the online model that
+    every feature predicts failure.
+    """
+    from meridian_v3.autopilot import _is_costonly_close
+    from meridian_v3.config import Settings
+
+    st = Settings()
+    entry = 1000.0
+    scratch_exit = entry * (1 + st.execution.flat_scratch_pct * 0.5)
+
+    # Same-mark closes are scratches regardless of what closed them.
+    for reason in (
+        "Stop hit at Rs1,000.50 (line was Rs1,000.40).",
+        "Target hit at Rs1,000.50.",
+        "The tape flipped against the paper long. Closing to train the model.",
+        "End of day - flattening the same-day paper clip.",
+    ):
+        assert _is_costonly_close(reason, entry, scratch_exit, st) is True, reason
+
+    # A genuine move still trains, whatever closed it.
+    real_exit = entry * 1.05
+    for reason in ("Stop hit at Rs1,050.00 (line was Rs1,049.00).", "Target hit at Rs1,050.00."):
+        assert _is_costonly_close(reason, entry, real_exit, st) is False, reason
+
+    # Guard against a divide-by-zero / missing entry price.
+    assert _is_costonly_close("Target hit.", 0.0, 100.0, st) is False

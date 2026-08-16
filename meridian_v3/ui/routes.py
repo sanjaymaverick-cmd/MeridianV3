@@ -5,7 +5,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, File, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from loguru import logger
 from sqlalchemy import func, select
@@ -32,6 +32,7 @@ from meridian_v3.storage.db import get_session
 from meridian_v3.storage.schema import (
     AccountState,
     DeskEvent,
+    EquityPoint,
     Fill,
     Holding,
     Position,
@@ -40,6 +41,7 @@ from meridian_v3.storage.schema import (
     WatchItem,
 )
 from meridian_v3.storage.seed import seed_demo
+from meridian_v3.ui.glossary import glossary_payload
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).resolve().parent / "templates"))
 TEMPLATES.env.cache = None
@@ -100,6 +102,16 @@ def _ctx(request: Request, active: str, **extra):
     }
 
 
+@router.get("/api/glossary")
+def api_glossary() -> dict:
+    """Plain-English definitions for desk jargon, for the hover tooltips.
+
+    Static per build, so the browser is told it may cache it for an hour
+    rather than refetching on every page view.
+    """
+    return JSONResponse(glossary_payload(), headers={"Cache-Control": "public, max-age=3600"})
+
+
 @router.get("/", response_class=HTMLResponse)
 def command(request: Request):
     session = request.state.session
@@ -111,10 +123,167 @@ def command(request: Request):
     positions = decorate_positions(
         session, list(session.scalars(select(Position).where(Position.status == "open")))
     )
+    settings = get_settings()
+    # Infographic inputs. Kept as plain numbers here rather than built in the
+    # template, so the page stays markup and the arithmetic stays testable.
+    equity_points = list(
+        session.scalars(
+            select(EquityPoint.equity)
+            .where(EquityPoint.venue == "paper")
+            .order_by(EquityPoint.as_of.desc())
+            .limit(60)
+        )
+    )
+    infographic = {
+        "spark": list(reversed([round(float(v), 2) for v in equity_points])),
+        # Drawdown as a fraction of the pause threshold: 1.0 means the desk
+        # has hit the line where it stops opening new positions.
+        "dd_ratio": (
+            min(1.0, paper_dd.drawdown / settings.safety.drawdown_pause_pct)
+            if paper_dd and settings.safety.drawdown_pause_pct
+            else 0.0
+        ),
+        "dd_pause_pct": settings.safety.drawdown_pause_pct,
+        "open_count": len(positions),
+        "max_open": settings.sizing.max_concurrent_normal,
+        "allocation": _allocation_slices(positions, paper),
+        "cost_bars": _cost_vs_target_bars(settings),
+    }
     return _render(
         request, "command.html", "command",
         paper_dd=paper_dd, live_dd=live_dd, signals=signals, positions=positions,
+        info=infographic,
     )
+
+
+def _decision_funnel(session) -> dict:
+    """Where the most recent cycle's signals died.
+
+    The single most-asked question about this desk is "why isn't it
+    trading?", and the honest answer is always a stage in this funnel. The
+    reason strings are the same ones written into each SignalRow, so this
+    counts what actually happened rather than re-deriving it.
+    """
+    last = session.scalar(select(SignalRow.created_at).order_by(SignalRow.id.desc()))
+    if last is None:
+        return {"stages": [], "total": 0}
+    rows = list(session.scalars(select(SignalRow).where(SignalRow.created_at == last)))
+    total = len(rows)
+
+    no_side = sum(1 for r in rows if "no side to bet" in (r.reason or ""))
+    meta_skip = sum(1 for r in rows if "second model is not sure enough" in (r.reason or ""))
+    cost_skip = sum(1 for r in rows if "worth the friction" in (r.reason or ""))
+    edge_skip = sum(1 for r in rows if "costs plus a safety pad" in (r.reason or ""))
+    safety_skip = sum(1 for r in rows if "safety gate refused" in (r.reason or ""))
+    took = sum(1 for r in rows if r.paper)
+
+    directional = total - no_side
+    past_meta = directional - meta_skip
+    past_cost = past_meta - cost_skip - edge_skip
+
+    stages = [
+        {"k": "Evaluated", "n": total, "note": "every symbol with a live price"},
+        {"k": "Had a direction", "n": directional, "note": f"{no_side} had no side to bet"},
+        {"k": "Second model agreed", "n": max(0, past_meta), "note": f"{meta_skip} judged not sure enough"},
+        {"k": "Worth the cost", "n": max(0, past_cost), "note": f"{cost_skip + edge_skip} could not cover fees"},
+        {"k": "Traded", "n": took, "note": f"{safety_skip} refused by a safety gate"},
+    ]
+    top = max((s["n"] for s in stages), default=1) or 1
+    for s in stages:
+        s["pct"] = round(s["n"] / top * 100, 1)
+    return {"stages": stages, "total": total, "at": last}
+
+
+def _outcome_mix(session) -> dict:
+    """Genuine wins/losses versus fee-only scratches.
+
+    A clip closed within a whisker of its entry didn't test the signal at
+    all — the only thing that changed hands was fees. Counting those as
+    losses is what taught the online model that everything loses, so the
+    split is shown explicitly rather than folded into a win rate.
+    """
+    rows = list(
+        session.scalars(
+            select(Position).where(
+                Position.venue == "paper",
+                Position.status == "closed",
+                Position.realized_pnl.is_not(None),
+            )
+        )
+    )
+    scratch = wins = losses = 0
+    for p in rows:
+        if not p.avg_price or not p.exit_price:
+            continue
+        if abs(p.exit_price / p.avg_price - 1) < 0.002:
+            scratch += 1
+        elif (p.realized_pnl or 0) > 0:
+            wins += 1
+        else:
+            losses += 1
+    total = scratch + wins + losses
+    pct = lambda n: round(n / total * 100, 1) if total else 0.0
+    return {
+        "total": total, "scratch": scratch, "wins": wins, "losses": losses,
+        "scratch_pct": pct(scratch), "wins_pct": pct(wins), "losses_pct": pct(losses),
+        "real": wins + losses,
+    }
+
+
+def _allocation_slices(positions, paper) -> list[dict]:
+    """Where the book's money actually sits, as percentage slices."""
+    if not paper or not paper.equity:
+        return []
+    tones = {
+        "equity_cash": "#c4a35a",
+        "crypto_spot": "#4a9b7f",
+        "global_commodities": "#8a7340",
+        "forex_micro": "#6b7380",
+        "india_futures": "#9aa3b2",
+    }
+    # decorate_positions() hands back dicts, not ORM rows.
+    by_market: dict[str, float] = {}
+    for p in positions:
+        value = (p.get("current") or 0) * (p.get("qty") or 0)
+        market = p.get("market") or "other"
+        by_market[market] = by_market.get(market, 0.0) + value
+    out = [
+        {
+            "market": market,
+            "pct": round(value / paper.equity * 100, 1),
+            "tone": tones.get(market, "#3a4150"),
+        }
+        for market, value in sorted(by_market.items(), key=lambda kv: -kv[1])
+        if value > 0
+    ]
+    cash_pct = round(max(0.0, paper.cash) / paper.equity * 100, 1)
+    if cash_pct > 0:
+        out.append({"market": "cash", "pct": cash_pct, "tone": "#1c2433"})
+    return out
+
+
+def _cost_vs_target_bars(settings) -> list[dict]:
+    """What each market's target has to clear before a trade is worth taking.
+
+    The bar is the required target move; the red marker is the round-trip
+    cost it has to beat. Costs differ ~10x across these venues (crypto's 1%
+    VDA TDS is charged on both legs), so a target that is generous on a
+    commodity can be unreachable on a coin — this is the one view that makes
+    that visible at a glance.
+    """
+    from meridian_v3.engine.edge import round_trip_cost_pct
+
+    multiple = settings.decision.min_reward_cost_multiple
+    rows = []
+    for market in ("global_commodities", "forex_micro", "india_futures", "equity_cash", "crypto_spot"):
+        cost = round_trip_cost_pct(market) * 100
+        need = cost * multiple
+        rows.append({"market": market, "cost": round(cost, 3), "need": round(need, 2)})
+    ceiling = max((r["need"] for r in rows), default=1.0) or 1.0
+    for r in rows:
+        r["fill_pct"] = round(r["need"] / ceiling * 100, 1)
+        r["marker_pct"] = round(r["cost"] / ceiling * 100, 1)
+    return rows
 
 
 def _group_signals_by_symbol(session, window: int = 500) -> list[dict]:
@@ -181,7 +350,7 @@ def signals_page(request: Request, before: int | None = None):
     events = list(session.scalars(select(DeskEvent).order_by(DeskEvent.created_at.desc()).limit(20)))
     grouped = _group_signals_by_symbol(session)
     return _render(
-        request, "signals.html", "signals",
+        request, "signals.html", "signals", funnel=_decision_funnel(session),
         rows=rows, events=events, next_cursor=next_cursor, grouped=grouped,
     )
 
@@ -233,6 +402,7 @@ def book(request: Request, before: int | None = None):
     # written, not just this page, so it deliberately keeps its own
     # full-history query rather than reusing the paginated slice above.
     all_fills_for_charges = list(session.scalars(select(Fill)))
+    outcomes = _outcome_mix(session)
     return _render(
         request,
         "book.html",
@@ -249,6 +419,7 @@ def book(request: Request, before: int | None = None):
         charges=summarize_charges(all_fills_for_charges),
         broker=broker,
         broker_label=broker_label(broker),
+        outcomes=outcomes,
     )
 
 

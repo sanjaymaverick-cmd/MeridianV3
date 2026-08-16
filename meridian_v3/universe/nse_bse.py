@@ -7,6 +7,7 @@ liquid set (Nifty 50, Next 50, banks, midcaps, and a BSE sleeve).
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -152,7 +153,28 @@ def install_universe(session: Session) -> int:
     wanted: dict[str, tuple[str, str, str]] = {}
     for symbol, exchange, klass, why in ALGO_UNIVERSE:
         wanted.setdefault(symbol, (exchange, klass, why))
-    for symbol, klass, why in BINANCE_UNIVERSE:
+    # The crypto sleeve is whatever Binance currently lists above the
+    # configured turnover cut, not a hardcoded ten. Falls back to the static
+    # BINANCE_UNIVERSE if Binance is unreachable, so an offline install still
+    # gets a working sleeve.
+    #
+    # Skipped under MERIDIAN_V3_TEST_DB (the same marker app.py uses to keep
+    # the autopilot from starting in tests): a seed shouldn't make ~2 network
+    # calls per test, which turned the suite from 30s into 114s and made it
+    # depend on Binance being reachable from CI.
+    crypto_rows: tuple[tuple[str, str, str], ...]
+    if os.environ.get("MERIDIAN_V3_TEST_DB"):
+        crypto_rows = BINANCE_UNIVERSE
+    else:
+        from meridian_v3.config import get_settings
+        from meridian_v3.universe.crypto import expand_binance_universe
+
+        _wl = get_settings().watchlist
+        crypto_rows = expand_binance_universe(
+            min_quote_volume=_wl.crypto_min_quote_volume_usd,
+            limit=_wl.crypto_max_symbols,
+        )
+    for symbol, klass, why in crypto_rows:
         wanted.setdefault(symbol, ("BINANCE", klass, why))
     for symbol, klass, why in INDIA_DERIV_UNIVERSE:
         wanted.setdefault(symbol, ("NSE", klass, why))
@@ -181,6 +203,28 @@ def install_universe(session: Session) -> int:
         if row.status != "active":
             row.status = "active"
             written += 1
+
+    # The crypto sleeve is declarative: it must end up matching whatever the
+    # turnover cut currently selects, not just grow. Without this, install is
+    # add-only — a symbol dropped from the universe (because its turnover fell
+    # below the floor, or because the floor was raised) stays active forever,
+    # and any manual prune is silently undone the next time someone seeds.
+    # Observed exactly that: raising the floor to $5M and pruning 248 thin
+    # pairs was reverted wholesale by a later install.
+    #
+    # Scoped to the dynamic crypto sleeve on purpose. The equity/commodity/FX
+    # lists are static, and a symbol the user deactivated by hand there should
+    # stay deactivated.
+    for symbol, row in have.items():
+        if row.status != "active":
+            continue
+        if row.asset_class != "crypto":
+            continue
+        if symbol in wanted:
+            continue
+        row.status = "inactive"
+        row.updated_at = now
+        written += 1
     if written:
         session.flush()
     return written

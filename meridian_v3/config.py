@@ -119,8 +119,10 @@ class SizingCfg(BaseModel):
     high_confidence: float = 0.78
     live_confidence: float = 0.82
     positional_confidence: float = 0.88
-    max_concurrent_normal: int = 16
-    max_concurrent_high: int = 20
+    # Concentration over breadth: fewer, more convicted clips rather than a
+    # thin slice of everything that clears the bar. Was 16/20.
+    max_concurrent_normal: int = 8
+    max_concurrent_high: int = 10
     max_position_pct: float = 0.18
     cash_reserve_pct: float = 0.10
     # 2.9 — stop_price() uses this to tell an ATR *distance* apart from an
@@ -176,6 +178,14 @@ class DecisionCfg(BaseModel):
     # the confidence that closed clip was opened on (F16).
     reentry_cooldown_sec: int = 300
     reentry_confidence_margin: float = 0.05
+    # The modelled target must be at least this multiple of the *round-trip*
+    # cost before a trade is worth taking. Without it the desk churned:
+    # measured over its own closed history, the median absolute price move at
+    # exit was 0.00% and 96% of exits moved less than crypto's 2.236%
+    # round-trip floor — it was systematically closing before a trade could
+    # pay for itself. Scales per market automatically, since the cost side is
+    # market-specific (commodities ~0.047%, equity ~0.222%, crypto ~2.236%).
+    min_reward_cost_multiple: float = 3.0
 
 
 class RegimeCfg(BaseModel):
@@ -202,6 +212,18 @@ class GreeksCfg(BaseModel):
 
 class WatchlistCfg(BaseModel):
     active_cap: int = 200
+    # Binance lists ~490 USDT spot pairs. The crypto sleeve is taken from
+    # whatever it currently lists, cut by 24h turnover: below this the
+    # spread/slippage on a clip costs more than any modelled edge, and each
+    # extra pair is another klines round trip on every price refresh.
+    # ~$5M ≈ 40 pairs, ~$1M ≈ 130, ~$250k ≈ 290. Set 0 to take everything.
+    # $5M is the default deliberately: Indian crypto TDS is 1% of turnover
+    # per side, so a round trip costs ~2.24% before any spread. Thin names
+    # cannot carry that, and slippage there is worst, not best.
+    crypto_min_quote_volume_usd: float = 5_000_000.0
+    # Hard ceiling on the crypto sleeve regardless of the turnover cut.
+    # None = no ceiling.
+    crypto_max_symbols: int | None = None
 
 
 class AlertsCfg(BaseModel):

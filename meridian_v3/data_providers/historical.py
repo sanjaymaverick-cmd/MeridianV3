@@ -130,6 +130,80 @@ def backfill_nse_symbol(session: Session, symbol: str, *, years: int = 5) -> int
     return written
 
 
+def backfill_crypto_symbol(session: Session, symbol: str, *, limit: int = 1000) -> int:
+    """Backfill ``HistoricalBar`` for one Binance pair, marked in rupees.
+
+    Binance serves up to 1000 daily klines (~2.7 years), which clears the
+    82-bar minimum a walk-forward fold needs several times over. Marked in
+    INR via the same USDINR rate the live tape uses, so a backtest's P&L is
+    in the same currency as the book.
+    """
+    from meridian_v3.data_providers.binance import binance_pair, fetch_klines
+    from meridian_v3.data_providers.service import _usdinr
+
+    pair = binance_pair(symbol)
+    try:
+        rows = fetch_klines(pair, limit=limit)
+    except Exception:
+        return 0
+    if not rows:
+        return 0
+    fx, _is_fallback = _usdinr(session)
+
+    existing = {
+        row.bar_date: row
+        for row in session.scalars(select(HistoricalBar).where(HistoricalBar.symbol == symbol))
+    }
+    written = 0
+    for row in rows:
+        bar_date = row["time"]
+        try:
+            o, h, l, c = (float(row[k]) * fx for k in ("Open", "High", "Low", "Close"))
+            v = float(row.get("Volume", 0.0))
+        except (TypeError, ValueError):
+            continue
+        if o <= 0 or h <= 0 or l <= 0 or c <= 0:
+            continue
+        bar = existing.get(bar_date)
+        if bar is None:
+            bar = HistoricalBar(
+                symbol=symbol, bar_date=bar_date, open=o, high=h, low=l, close=c,
+                volume=v, source="binance",
+            )
+            session.add(bar)
+            existing[bar_date] = bar
+        else:
+            bar.open, bar.high, bar.low, bar.close, bar.volume, bar.source = o, h, l, c, v, "binance"
+        written += 1
+    return written
+
+
+def backfill_crypto_watchlist(session: Session, *, limit: int = 1000, sleep_ms: int = 0) -> dict:
+    """Backfill every active crypto spot symbol on the watchlist."""
+    symbols = list(
+        session.scalars(
+            select(WatchItem.symbol).where(WatchItem.status == "active", WatchItem.asset_class == "crypto")
+        )
+    )
+    results: dict[str, int] = {}
+    failed: list[str] = []
+    for i, symbol in enumerate(symbols):
+        n = backfill_crypto_symbol(session, symbol, limit=limit)
+        if n:
+            results[symbol] = n
+        else:
+            failed.append(symbol)
+        session.flush()
+        if sleep_ms and i < len(symbols) - 1:
+            time.sleep(sleep_ms / 1000)
+    return {
+        "symbols": len(symbols),
+        "ok": len(results),
+        "failed": failed,
+        "bars_written": sum(results.values()),
+    }
+
+
 def backfill_nse_watchlist(session: Session, *, years: int = 5, sleep_ms: int = 400) -> dict:
     """Backfill every active NSE-equity symbol on the watchlist.
 

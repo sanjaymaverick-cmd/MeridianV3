@@ -179,3 +179,121 @@ input { padding: 6px 8px; }
   .rail { display: none; }
   .grid-2 { grid-template-columns: 1fr; }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   GLOSSARY TOOLTIP
+   The desk is dense with jargon (ATR, confluence, TDS, walk-forward). Any
+   known term gets a hover/focus explanation in plain English.
+
+   WCAG 1.4.13 (content on hover or focus): the tip must be reachable by
+   keyboard, not just mouse — ui-ux-pro-max flags hover-only as a Critical
+   anti-pattern, and every chart guideline it returned repeats "keyboard:
+   focus reveals the same detail as hover". So `.term` is a <button>:
+   focusable, dismissible with Esc, and announced to a screen reader.
+   ══════════════════════════════════════════════════════════════════════════ */
+.term {
+  all: unset;
+  cursor: help;
+  border-bottom: 1px dotted var(--gold-dim);
+  transition: border-color 160ms ease, color 160ms ease;
+}
+.term:hover, .term:focus-visible { border-bottom-color: var(--gold); color: var(--gold); }
+.term:focus-visible { outline: 1px solid var(--gold); outline-offset: 2px; }
+
+.tip {
+  position: fixed; z-index: 90; max-width: 300px; pointer-events: none;
+  padding: 10px 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--line-gold);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.55), 0 0 0 1px rgba(0,0,0,0.3);
+  opacity: 0; transform: translateY(3px);
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+.tip[data-show] { opacity: 1; transform: translateY(0); }
+.tip .tip-label {
+  font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--gold); margin: 0 0 5px;
+}
+.tip .tip-body { font-size: 12.5px; line-height: 1.55; color: var(--ivory); margin: 0; }
+.tip .tip-hint {
+  display: block; margin-top: 7px; padding-top: 6px; border-top: 1px solid var(--line);
+  font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ash);
+}
+
+/* ── Infographics ────────────────────────────────────────────────────────
+   Hand-rolled SVG rather than a charting library: this app has no build
+   step, and ui-ux-pro-max's chart guidance recommends custom SVG for
+   gauges/bullets anyway. Every one of these pairs the graphic with a
+   readable number, because "color alone" fails its own accessibility note. */
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+.stat {
+  padding: 14px; background: var(--panel-2); border: 1px solid var(--line);
+  position: relative; overflow: hidden;
+  transition: border-color 200ms ease, transform 200ms ease;
+}
+.stat:hover { border-color: var(--line-gold); transform: translateY(-1px); }
+.stat .stat-k {
+  font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--ash); margin: 0 0 8px;
+}
+.stat .stat-v {
+  font-family: var(--mono); font-size: 24px; font-variant-numeric: tabular-nums;
+  margin: 0; line-height: 1.1;
+}
+.stat .stat-sub { font-size: 11px; color: var(--mist); margin: 6px 0 0; }
+.stat .spark { display: block; margin-top: 10px; width: 100%; height: 30px; }
+
+/* Bullet chart — the documented match for "performance vs target". Used for
+   target-vs-round-trip-cost per market: the bar is the target move, the
+   marker is the cost that must be cleared. */
+.bullet { display: grid; grid-template-columns: 108px 1fr 62px; gap: 10px; align-items: center; margin-bottom: 7px; }
+.bullet-k { font-size: 11px; color: var(--mist); }
+.bullet-track { position: relative; height: 16px; background: var(--ink); border: 1px solid var(--line); }
+.bullet-fill { position: absolute; inset: 1px auto 1px 1px; background: linear-gradient(90deg, var(--gold-dim), var(--gold)); }
+.bullet-marker { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--down); }
+.bullet-v { font-family: var(--mono); font-size: 11px; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Gauge — single KPI against a threshold (drawdown vs the pause line). */
+.gauge { display: block; margin: 0 auto; }
+.gauge-track { stroke: var(--line); }
+.gauge-fill { stroke: var(--gold); transition: stroke-dashoffset 600ms cubic-bezier(0.22,1,0.36,1); }
+.gauge-fill.warn { stroke: var(--elevated); }
+.gauge-fill.bad { stroke: var(--stress); }
+
+/* Allocation bar — where the book's money actually is, in one strip. */
+.alloc { display: flex; height: 26px; border: 1px solid var(--line); overflow: hidden; }
+.alloc span { display: block; height: 100%; transition: filter 180ms ease; }
+.alloc span:hover { filter: brightness(1.35); }
+.alloc-key { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; font-size: 11px; color: var(--mist); }
+.alloc-key i { display: inline-block; width: 8px; height: 8px; margin-right: 5px; }
+
+.panel-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 12px; }
+.panel-head h2 { margin: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .tip, .stat, .gauge-fill, .alloc span { transition: none; }
+}
+
+/* Decision funnel — where a cycle's signals died. Each row is a gate; the
+   widest drop between rows is the honest answer to "why isn't it trading". */
+.funnel-row {
+  display: grid; grid-template-columns: 150px 1fr 46px; gap: 10px;
+  align-items: center; margin-bottom: 6px;
+}
+.funnel-k { font-size: 11px; color: var(--mist); }
+.funnel-bar { height: 18px; background: var(--ink); border: 1px solid var(--line); }
+.funnel-bar > span {
+  display: block; height: 100%;
+  background: linear-gradient(90deg, var(--gold-dim), var(--gold));
+  transition: width 500ms cubic-bezier(0.22,1,0.36,1);
+}
+.funnel-row.is-last .funnel-bar > span { background: linear-gradient(90deg, var(--up), #5fbb9a); }
+.funnel-n { font-family: var(--mono); font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; }
+.funnel-note { grid-column: 2 / -1; font-size: 10.5px; color: var(--ash); margin-top: -2px; }
+
+@media (prefers-reduced-motion: reduce) { .funnel-bar > span { transition: none; } }
+
+@media (max-width: 620px) {
+  .funnel-row, .bullet { grid-template-columns: 96px 1fr 44px; }
+  .stat-grid { grid-template-columns: 1fr; }
+}

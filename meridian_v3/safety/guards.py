@@ -110,23 +110,37 @@ def evaluate_safety(
 
     if session_blocks_new and horizon != "positional":
         allow_live = False
+        # Paper is blocked here too, not just live. A shut venue has no
+        # executable price — the only mark available is the last session's
+        # stale close, so a "fill" against it is a price the book could
+        # never actually have gotten. That is the same dishonest-fill
+        # problem the audit's F1/F2 were about, and it poisons training
+        # twice over: the entry price is fiction, and the outcome it
+        # teaches the belief/logit is fiction too. Observed live: a Sunday
+        # COPPER.X buy of ~₹18,000 (18% of the book) filled at Friday's
+        # close. Crypto is unaffected — it is genuinely 24/7, so
+        # `session_blocks_new` stays False for it above.
+        allow_paper = False
         if crypto:
-            reasons.append("Crypto session block (unexpected). Paper can still learn.")
+            reasons.append("Crypto session block (unexpected).")
         elif market == "forex_micro":
             reasons.append(
                 "FX is shut or too close to the Friday 17:00 ET close. "
-                "Crypto can keep going. Paper can still learn."
+                "No new paper either — a shut venue has no executable price. "
+                "Crypto can keep going."
             )
         elif market == "global_commodities":
             reasons.append(
                 "Global commodities are shut or near the Globex halt. "
-                "Crypto can keep going. Paper can still learn."
+                "No new paper either — a shut venue has no executable price. "
+                "Crypto can keep going."
             )
         else:
             reasons.append(
                 "Too close to the NSE close, or the Indian market is shut "
                 "(Friday 15:30 IST → Monday 09:15 IST). "
                 "Intraday India clips do not stay overnight. "
+                "No new paper either — a shut venue has no executable price. "
                 "Crypto stays 24/7. FX and global commodities follow their own clocks."
             )
 

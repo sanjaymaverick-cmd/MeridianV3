@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from loguru import logger
 from sqlalchemy import func, select
@@ -36,6 +36,7 @@ from meridian_v3.storage.schema import (
     PriceBar,
     PriceCache,
     RegimeState,
+    RobustnessSnapshot,
     SignalRow,
     WatchItem,
 )
@@ -113,9 +114,76 @@ def _market_robustness(session: Session, market: str, settings) -> Robustness:
         )
     )
     folds = walk_forward_folds(len(pnls))
+    if folds:
+        is_scores = [hit_rate(pnls[f.train_start : f.train_end]) for f in folds]
+        oos_scores = [hit_rate(pnls[f.test_start : f.test_end]) for f in folds]
+        return robustness(is_scores, oos_scores, max_gap=settings.decision.walkforward_oos_gap_max)
+
+    # No live folds yet. Fall back to a backtest-seeded verdict if one has
+    # been persisted for this market. Without this the desk is stuck in a
+    # deadlock: robustness needs closed trades, but the 0.7x penalty for
+    # having none suppresses the confidence needed to open any. Live always
+    # wins the moment it has enough history — this branch only runs when it
+    # has none — and the reason says plainly that it came from a backtest.
+    seeded = session.scalar(select(RobustnessSnapshot).where(RobustnessSnapshot.market == market))
+    if seeded is not None:
+        return Robustness(
+            is_score=seeded.is_score,
+            oos_score=seeded.oos_score,
+            gap=seeded.gap,
+            robust=bool(seeded.robust),
+            folds=seeded.folds,
+            reason=seeded.reason,
+        )
+    return robustness([], [], max_gap=settings.decision.walkforward_oos_gap_max)
+
+
+def seed_robustness_from_backtest(
+    session: Session,
+    market: str,
+    *,
+    symbols: list[str],
+    start: date,
+    end: date,
+    starting_capital: float = 100_000.0,
+) -> RobustnessSnapshot | None:
+    """Replay the real pipeline over history for ``market`` and persist the
+    walk-forward verdict, so a cold book isn't permanently penalised.
+
+    The backtest runs on an isolated database (see ``backtest/engine.py``),
+    so this reads nothing from and writes nothing to the live book except
+    the resulting snapshot row.
+    """
+    from meridian_v3.backtest.engine import run_backtest
+
+    result = run_backtest(symbols, start=start, end=end, starting_capital=starting_capital)
+    pnls = result.closed_pnls
+    folds = walk_forward_folds(len(pnls))
     is_scores = [hit_rate(pnls[f.train_start : f.train_end]) for f in folds]
     oos_scores = [hit_rate(pnls[f.test_start : f.test_end]) for f in folds]
-    return robustness(is_scores, oos_scores, max_gap=settings.decision.walkforward_oos_gap_max)
+    settings = get_settings()
+    verdict = robustness(is_scores, oos_scores, max_gap=settings.decision.walkforward_oos_gap_max)
+
+    reason = (
+        f"{verdict.reason} (Seeded from a backtest of {len(symbols)} {market} symbol(s) over "
+        f"{result.trading_days_simulated} trading days, {len(pnls)} closed trades — not live "
+        "evidence. Live closed trades replace this as soon as there are enough for one fold.)"
+    )
+    row = session.scalar(select(RobustnessSnapshot).where(RobustnessSnapshot.market == market))
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    if row is None:
+        row = RobustnessSnapshot(market=market, computed_at=now)
+        session.add(row)
+    row.is_score = verdict.is_score
+    row.oos_score = verdict.oos_score
+    row.gap = verdict.gap
+    row.robust = 1 if verdict.robust else 0
+    row.folds = verdict.folds
+    row.trades = len(pnls)
+    row.reason = reason
+    row.source = "backtest"
+    row.computed_at = now
+    return row
 
 
 def load_logit(session: Session, rule: str = "core") -> OnlineLogit:

@@ -3,6 +3,7 @@ from zoneinfo import ZoneInfo
 
 from meridian_v3.capital.sizer import size_position
 from meridian_v3.config import Settings
+from meridian_v3.engine.confluence import FactorVote
 from meridian_v3.engine.drawdown import assess_drawdown
 from meridian_v3.router.calendar import coverage_note, market_session
 from meridian_v3.router.markets import market_for, route_market
@@ -76,13 +77,54 @@ def test_sunday_evening_et_reopens_fx_and_commodities():
 
 
 def test_live_crypto_not_blocked_when_india_is_shut():
+    """16:00 IST on a Friday: NSE has closed, FX and crypto have not.
+
+    Crypto is genuinely 24/7 so both paper and live stay open. India equity
+    is shut, and a shut venue has no executable price — so new *paper*
+    entries are blocked there too now, not just live. (Previously paper was
+    allowed through on the "paper can still learn" rationale, but it was
+    learning from fills at a stale last-session close it could never have
+    actually gotten.)
+    """
     now = datetime(2026, 8, 14, 16, 0, tzinfo=IST)
     crypto = _safety(now, "crypto_spot")
     equity = _safety(now, "equity_cash")
     fx = _safety(now, "forex_micro")
     assert crypto.allow_paper and crypto.allow_live
-    assert equity.allow_paper and equity.allow_live is False
+    assert equity.allow_paper is False and equity.allow_live is False
     assert fx.allow_paper and fx.allow_live
+
+
+def test_no_new_paper_in_a_shut_commodity_venue_on_a_weekend():
+    """The bug this blocks, observed live: on a Sunday the desk opened a
+    ~₹18,000 COPPER.X paper clip (18% of the book) at Friday's closing
+    price, because the session guard only stopped *live* trades. A shut
+    venue has no executable price, so that fill — and everything the
+    belief/logit then learned from it — was against a price the book could
+    never have obtained.
+
+    Crypto must stay unaffected: it is genuinely 24/7.
+    """
+    sunday = datetime(2026, 8, 16, 9, 0, tzinfo=IST)
+    commodities = _safety(sunday, "global_commodities")
+    crypto = _safety(sunday, "crypto_spot")
+
+    assert commodities.allow_paper is False
+    assert commodities.allow_live is False
+    assert any("executable price" in r for r in commodities.reasons)
+
+    # The whole point of trading a 24/7 venue: crypto keeps going.
+    assert crypto.allow_paper is True
+    assert crypto.allow_live is True
+
+
+def test_positional_holds_are_still_exempt_from_the_session_block():
+    """The session gate has always exempted `positional` horizons (a
+    multi-day hold isn't trying to fill intraday). Blocking paper must not
+    quietly change that carve-out."""
+    sunday = datetime(2026, 8, 16, 9, 0, tzinfo=IST)
+    positional = _safety(sunday, "global_commodities", horizon="positional")
+    assert positional.allow_paper is True
 
 
 def test_live_fx_blocked_on_saturday():
@@ -195,3 +237,39 @@ def test_repair_lifts_ten_x_commodity_avg(session):
     assert abs(pos.avg_price - 423_642.60) < 1.0
     paper = session.query(AccountState).filter_by(venue="paper").one()
     assert paper.cash < 50_000
+
+
+def test_a_safety_refusal_says_so_in_the_reasons():
+    """A signal good enough to trade but refused by a safety gate must SAY
+    the gate refused it. Observed: commodity rows on a Sunday logged "We
+    take the paper trade" while `paper` was False, because the safety
+    verdict's own reasons were computed and then dropped."""
+    from meridian_v3.decision.engine import DecisionInput, decide
+    from meridian_v3.engine.edge import CostEstimate
+    from meridian_v3.engine.meta_label import PrimarySignal
+
+    sunday = datetime(2026, 8, 16, 9, 0, tzinfo=IST)
+    d = decide(
+        DecisionInput(
+            symbol="GOLD.X", price=420_000, atr=8_400, created_at=sunday,
+            primary=PrimarySignal(1, 1.4, "trend is up"),
+            votes=[
+                FactorVote("trend", 0.8, 1.0, "up"),
+                FactorVote("breakout", 0.6, 0.8, "high"),
+                FactorVote("score", 0.5, 0.7, "quality"),
+            ],
+            win_rupees=16_800, loss_rupees=12_600,
+            costs=CostEstimate(1, 1, 1, 1), payoff=1.33,
+            equity=100_000, cash=100_000,
+            drawdown=assess_drawdown(100_000, 100_000),
+            live_armed=False, live_today=0, open_count=0,
+            preferred_market="global_commodities", now=sunday,
+        ),
+        Settings(),
+    )
+    assert d.paper is False
+    blob = " ".join(d.reasons)
+    assert "safety gate refused" in blob
+    assert "executable price" in blob
+    # And it must NOT claim it took the trade.
+    assert "Paper trade is written" not in blob

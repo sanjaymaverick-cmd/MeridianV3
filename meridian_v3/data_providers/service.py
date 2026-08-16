@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timezone
 from io import StringIO
@@ -400,9 +401,28 @@ def _refresh_binance(session: Session, items, now: datetime, got: set[str]) -> i
     roots: dict[str, list] = {}
     for item in items:
         roots.setdefault(item.symbol.split(".", 1)[0], []).append(item)
-    for pair, group in roots.items():
+
+    # Binance klines are one HTTP round trip per pair (~700ms measured), so a
+    # few hundred pairs serially would take longer than the refresh interval
+    # itself and the cycle would never catch up. Fetch concurrently, then
+    # apply to the DB serially below — a SQLAlchemy Session is not
+    # thread-safe, so only the network half is parallel.
+    def _fetch(pair_group):
+        pair, group = pair_group
         futures = any(i.symbol.endswith(".F") or i.asset_class == "crypto_futures" for i in group)
         rows = fetch_klines(pair, futures=futures) or fetch_klines(pair, futures=False)
+        return pair, rows
+
+    fetched: dict[str, list] = {}
+    if roots:
+        workers = min(12, max(1, len(roots)))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for pair, rows in pool.map(_fetch, list(roots.items())):
+                if rows:
+                    fetched[pair] = rows
+
+    for pair, group in roots.items():
+        rows = fetched.get(pair)
         if not rows:
             continue
         frame = pd.DataFrame(rows).set_index("time")

@@ -320,6 +320,41 @@ class RegimeState(Base):
     as_of: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
+class RobustnessSnapshot(Base):
+    """A walk-forward verdict for one market, seeded from a backtest.
+
+    `pipeline._market_robustness` scores a market by walking its *closed
+    paper positions* forward. A fresh book has almost none, so every market
+    returned "Not enough walk-forward folds" -> robust=False -> a 0.7x
+    confidence penalty on every single decision, indefinitely: the desk
+    could not trade its way out, because it needed trades to earn the
+    confidence to trade.
+
+    A backtest replaying the real pipeline over years of `HistoricalBar`
+    produces exactly the P&L series that check needs, so it can seed the
+    cold start. This is deliberately kept as a *fallback*: once a market
+    has enough live closed positions to form real folds, the live verdict
+    wins. `source` records which produced the row, and the reason string
+    says so in words, so a seeded verdict is never mistaken for live
+    evidence.
+    """
+
+    __tablename__ = "robustness_snapshots"
+    __table_args__ = (UniqueConstraint("market", name="uq_robustness_market"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    market: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    is_score: Mapped[float] = mapped_column(Float, default=0.0)
+    oos_score: Mapped[float] = mapped_column(Float, default=0.0)
+    gap: Mapped[float] = mapped_column(Float, default=1.0)
+    robust: Mapped[int] = mapped_column(Integer, default=0)
+    folds: Mapped[int] = mapped_column(Integer, default=0)
+    trades: Mapped[int] = mapped_column(Integer, default=0)
+    reason: Mapped[str] = mapped_column(Text, default="")
+    source: Mapped[str] = mapped_column(String(24), default="backtest")
+    computed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
 class SchemaVersion(Base):
     """One row per one-time data migration that has actually run (2.3).
 

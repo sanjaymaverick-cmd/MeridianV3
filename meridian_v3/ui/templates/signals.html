@@ -8,6 +8,30 @@
     <p class="lede">Reviews always say “(not an order)”. A paper or live fill is written on a different card.</p>
   </div>
 </section>
+{% if funnel and funnel.stages %}
+<article class="panel" id="panel-funnel">
+  <div class="panel-head">
+    <h2>Where the last cycle's signals died</h2>
+    <span class="meta">{{ funnel.total }} evaluated{% if funnel.at %} · {{ funnel.at.strftime('%d %b %H:%M:%S') }}{% endif %}</span>
+  </div>
+  <div class="funnel">
+    {% for st in funnel.stages %}
+    <div class="funnel-row{{ ' is-last' if loop.last else '' }}">
+      <span class="funnel-k">{{ st.k }}</span>
+      <span class="funnel-bar"><span style="width:{{ st.pct }}%"></span></span>
+      <span class="funnel-n">{{ st.n }}</span>
+      <span class="funnel-note">{{ st.note }}</span>
+    </div>
+    {% endfor %}
+  </div>
+  <p class="meta" style="margin-top:12px">
+    Every stage is a gate the signal has to clear. The widest drop is the real answer to
+    "why isn't it trading" — a signal that never gets a direction, or that the second model
+    won't vouch for, never reaches the cost test at all.
+  </p>
+</article>
+{% endif %}
+
 <article class="panel">
   <h2>Pending reviews</h2>
   {% for ev in events %}

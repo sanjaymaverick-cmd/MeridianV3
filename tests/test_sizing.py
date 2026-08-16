@@ -55,3 +55,35 @@ def test_stop_distance_ratio_ceiling_is_a_config_knob_not_045():
     # is treated as an already-a-price-line stop and returned unchanged.
     line = stop_price("buy", 100.0, 40.0, tight)
     assert line == 40.0
+
+
+def test_cash_reserve_is_a_floor_not_a_sliding_fraction():
+    """The reserve must protect the same rupee amount however little cash is
+    left. It used to be min(equity * pct, cash * 0.35), so it shrank with the
+    cash it was meant to protect -- at Rs300 of cash it held back Rs105 -- and
+    the live book ran itself down to Rs106 (0.11% of equity) in one cycle
+    while the setting said 10%.
+    """
+    from meridian_v3.capital.sizer import size_position
+    from meridian_v3.config import Settings
+    from meridian_v3.engine.drawdown import assess_drawdown
+
+    settings = Settings()
+    equity = 100_000.0
+    floor = equity * settings.sizing.cash_reserve_pct
+
+    def _plan(cash: float):
+        return size_position(
+            equity=equity, cash=cash, price=1000.0, atr=20.0,
+            p_success=0.62, payoff=1.4, confidence=0.7,
+            drawdown=assess_drawdown(equity, equity),
+            settings=settings, market="equity_cash", open_count=0,
+        )
+
+    # Cash at exactly the reserve leaves nothing spendable.
+    assert _plan(floor).qty == 0
+    # Below the reserve, still nothing -- it must not scale down and continue.
+    assert _plan(floor * 0.5).qty == 0
+    assert _plan(100.0).qty == 0
+    # Comfortably above it, sizing works normally.
+    assert _plan(equity).qty > 0

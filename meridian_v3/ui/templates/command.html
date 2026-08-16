@@ -40,6 +40,80 @@
   <p class="lede">About every minute it scans India, crypto 24/7, FX, and global commodities, ranks the strongest setups on tapes that are open, opens paper clips the ₹50,000 book can hold, exits losers and winners, and trains from the results. You do not pick the names.</p>
 </article>
 
+{% if info %}
+<article class="panel" id="panel-vitals">
+  <div class="panel-head">
+    <h2>Book vitals</h2>
+    <span class="meta">Hover any underlined term for a plain-English explanation</span>
+  </div>
+  <div class="stat-grid">
+    <div class="stat">
+      <p class="stat-k">Equity</p>
+      <p class="stat-v">{{ paper.equity | inr if paper else '—' }}</p>
+      <p class="stat-sub">Cash {{ paper.cash | inr if paper else '—' }}</p>
+      {% if info.spark %}<span class="spark" data-spark="{{ info.spark | tojson }}"></span>{% endif %}
+    </div>
+    <div class="stat">
+      <p class="stat-k">Drawdown vs pause line</p>
+      <div data-gauge="{{ '%.3f'|format(info.dd_ratio) }}" data-warn="0.4" data-bad="0.75"></div>
+      <p class="stat-v" style="font-size:18px">{{ '%.1f'|format(paper_dd.drawdown * 100) if paper_dd else '0.0' }}%</p>
+      <p class="stat-sub">Desk pauses at {{ '%.0f'|format(info.dd_pause_pct * 100) }}% drawdown</p>
+    </div>
+    <div class="stat">
+      <p class="stat-k">Open positions</p>
+      <p class="stat-v">{{ info.open_count }}<span style="color:var(--ash);font-size:15px"> / {{ info.max_open }}</span></p>
+      <p class="stat-sub">Concurrent position ceiling</p>
+    </div>
+    <div class="stat">
+      <p class="stat-k">Peak</p>
+      <p class="stat-v">{{ paper.peak | inr if paper else '—' }}</p>
+      <p class="stat-sub">Best the book has ever been worth</p>
+    </div>
+  </div>
+</article>
+
+{% if info.allocation %}
+<article class="panel" id="panel-allocation">
+  <div class="panel-head">
+    <h2>Where the money is</h2>
+    <span class="meta">Share of equity</span>
+  </div>
+  <div class="alloc">
+    {% for slice in info.allocation %}
+    <span style="width:{{ slice.pct }}%;background:{{ slice.tone }}" title="{{ slice.market }} · {{ slice.pct }}%"></span>
+    {% endfor %}
+  </div>
+  <div class="alloc-key">
+    {% for slice in info.allocation %}
+    <span><i style="background:{{ slice.tone }}"></i>{{ slice.market }} {{ slice.pct }}%</span>
+    {% endfor %}
+  </div>
+</article>
+{% endif %}
+
+<article class="panel" id="panel-cost-bars">
+  <div class="panel-head">
+    <h2>How far a trade must move to be worth taking</h2>
+    <span class="meta">Bar = target needed · red line = round trip cost</span>
+  </div>
+  {% for row in info.cost_bars %}
+  <div class="bullet">
+    <span class="bullet-k">{{ row.market }}</span>
+    <span class="bullet-track">
+      <span class="bullet-fill" style="width:{{ row.fill_pct }}%"></span>
+      <span class="bullet-marker" style="left:{{ row.marker_pct }}%"></span>
+    </span>
+    <span class="bullet-v">{{ row.need }}%</span>
+  </div>
+  {% endfor %}
+  <p class="meta" style="margin-top:12px">
+    Crypto costs about ten times what equity costs to trade, because India charges 1% TDS
+    on every transfer — once going in and once coming out. That is why a coin has to move
+    several percent before the desk will touch it.
+  </p>
+</article>
+{% endif %}
+
 <div class="grid-2">
   <article class="panel" id="panel-paper-book">
     <h2>Paper book</h2>
@@ -75,6 +149,7 @@
 
 <article class="panel" id="panel-open-clips">
   <h2>Open clips</h2>
+  <div class="table-scroll">
   <table>
     <thead><tr><th>Opened</th><th>Venue</th><th>Name</th><th>Side</th><th>Qty</th><th>Avg buy</th><th>Current</th><th>Fees</th><th>Open P&amp;L</th><th>Market</th></tr></thead>
     <tbody>
@@ -96,10 +171,12 @@
     {% endfor %}
     </tbody>
   </table>
+  </div>
 </article>
 
 <article class="panel" id="panel-latest-decisions">
   <h2>Latest decisions</h2>
+  <div class="table-scroll">
   <table>
     <thead><tr><th>Name</th><th>Side</th><th>Conf</th><th>Confluence</th><th>Paper</th><th>Live</th></tr></thead>
     <tbody>
@@ -117,5 +194,6 @@
     {% endfor %}
     </tbody>
   </table>
+  </div>
 </article>
 {% endblock %}

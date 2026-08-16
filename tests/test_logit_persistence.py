@@ -72,3 +72,58 @@ def test_rules_do_not_cross_contaminate(session):
     other = load_logit(session, "some_other_rule")
     assert other.trained is False
     assert other.updates == 0
+
+
+def test_first_update_does_not_throw_away_the_cold_start_prior():
+    """`predict` must be continuous across the first update.
+
+    The learned path used to start at bias=0 with no weights, so the moment
+    `updates` went 0 -> 1 the model discarded the cold-start prior and fell
+    to sigmoid(0) = 0.50. Observed live: a single losing trade took
+    p_success from 0.76 to 0.43 -- under the 0.55 meta-label floor -- and
+    the desk then could not trade at all, so it could never earn its way
+    back. A one-way trapdoor that shut the whole book after one loss.
+    """
+    from meridian_v3.engine.meta_label import OnlineLogit, _cold_start_p
+
+    feats = {"primary": 1.0, "confluence": 0.72, "freshness": 0.9, "cheap": 1.0}
+    model = OnlineLogit()
+
+    # Untrained model agrees exactly with the cold-start formula.
+    assert abs(model.predict(feats) - _cold_start_p(feats)) < 1e-9
+
+    before = model.predict(feats)
+    model.update(feats, won=False)
+    after = model.predict(feats)
+
+    assert after < before, "a loss should still lower confidence"
+    # ...but by a learning step, not a cliff. The old behaviour dropped
+    # ~0.33 in one update; a single loss must not cross the trading floor.
+    assert before - after < 0.10, f"single-update drop of {before - after:.3f} is a cliff"
+    assert after > 0.55, "one loss must not block the desk outright"
+
+
+def test_a_losing_streak_still_shuts_the_desk_down():
+    """Graceful degradation is not the same as no degradation -- a genuinely
+    bad run must still stop it trading."""
+    from meridian_v3.engine.meta_label import OnlineLogit
+
+    feats = {"primary": 1.0, "confluence": 0.72, "freshness": 0.9, "cheap": 1.0}
+    model = OnlineLogit()
+    for _ in range(6):
+        model.update(feats, won=False)
+    assert model.predict(feats) < 0.55
+
+
+def test_wins_can_recover_a_blocked_model():
+    """The model must be able to climb back, or any dip is permanent."""
+    from meridian_v3.engine.meta_label import OnlineLogit
+
+    feats = {"primary": 1.0, "confluence": 0.72, "freshness": 0.9, "cheap": 1.0}
+    model = OnlineLogit()
+    for _ in range(6):
+        model.update(feats, won=False)
+    blocked = model.predict(feats)
+    for _ in range(6):
+        model.update(feats, won=True)
+    assert model.predict(feats) > blocked

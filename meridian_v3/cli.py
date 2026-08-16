@@ -58,6 +58,19 @@ def main(argv: list[str] | None = None) -> int:
         help="Backfill years of NSE daily bars (via jugaad-data) into historical_bars, for backtesting",
     )
     backfill.add_argument("--years", type=int, default=5)
+    backfill.add_argument(
+        "--crypto", action="store_true",
+        help="Also backfill active crypto pairs from Binance klines (~2.7y of daily bars)",
+    )
+    seedrob = sub.add_parser(
+        "seed-robustness",
+        help=(
+            "Backtest each market over historical_bars and persist the walk-forward "
+            "verdict, so a cold book is not permanently penalised by having no closed "
+            "trades yet. Live closed trades override the seed once there are enough."
+        ),
+    )
+    seedrob.add_argument("--years", type=int, default=3)
     bt = sub.add_parser(
         "backtest",
         help="Replay the real decision/execution pipeline against historical_bars on an isolated DB",
@@ -105,7 +118,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "register-dry-run-broker":
         return _register_dry_run_broker()
     if args.cmd == "backfill-history":
-        return _backfill_history(years=args.years)
+        return _backfill_history(years=args.years, crypto=args.crypto)
+    if args.cmd == "seed-robustness":
+        return _seed_robustness(years=args.years)
     if args.cmd == "backtest":
         return _backtest(symbols=args.symbols, years=args.years, capital=args.capital)
     return _serve()
@@ -234,8 +249,8 @@ def _repair_book() -> int:
         session.close()
 
 
-def _backfill_history(*, years: int) -> int:
-    from meridian_v3.data_providers.historical import backfill_nse_watchlist
+def _backfill_history(*, years: int, crypto: bool = False) -> int:
+    from meridian_v3.data_providers.historical import backfill_crypto_watchlist, backfill_nse_watchlist
 
     session = get_session()
     try:
@@ -247,6 +262,64 @@ def _backfill_history(*, years: int) -> int:
         )
         if result["failed"]:
             print(f"no data for: {', '.join(result['failed'])}")
+        if crypto:
+            cr = backfill_crypto_watchlist(session)
+            session.commit()
+            print(
+                f"backfilled {cr['ok']}/{cr['symbols']} crypto pair(s), "
+                f"{cr['bars_written']} bar(s) written."
+            )
+            if cr["failed"]:
+                print(f"no crypto data for: {', '.join(cr['failed'][:10])}")
+        return 0
+    finally:
+        session.close()
+
+
+def _seed_robustness(*, years: int) -> int:
+    """Seed each market's walk-forward verdict from a backtest.
+
+    Without this the desk deadlocks: the robustness check needs closed
+    trades, and having none applies a 0.7x confidence penalty to every
+    decision, which suppresses the confidence needed to open any.
+    """
+    from collections import defaultdict
+    from datetime import date, timedelta
+
+    from sqlalchemy import select
+
+    from meridian_v3.pipeline import seed_robustness_from_backtest
+    from meridian_v3.router.markets import market_for
+    from meridian_v3.storage.db import desk_lock
+    from meridian_v3.storage.schema import HistoricalBar, WatchItem
+
+    session = get_session()
+    try:
+        klass = {w.symbol: w.asset_class for w in session.scalars(select(WatchItem))}
+        have = [r[0] for r in session.execute(select(HistoricalBar.symbol).distinct()).all()]
+        by_market: dict[str, list[str]] = defaultdict(list)
+        for symbol in have:
+            by_market[market_for(klass.get(symbol, "equity"), symbol)].append(symbol)
+        if not by_market:
+            print("no historical_bars yet — run backfill-history first.")
+            return 1
+
+        end = date.today()
+        start = end - timedelta(days=365 * years)
+        for market, symbols in sorted(by_market.items()):
+            print(f"backtesting {market} ({len(symbols)} symbols) ...", flush=True)
+            row = seed_robustness_from_backtest(
+                session, market, symbols=sorted(symbols), start=start, end=end
+            )
+            with desk_lock:
+                session.commit()
+            if row is None:
+                print(f"  {market}: no verdict")
+                continue
+            print(
+                f"  {market}: robust={bool(row.robust)} folds={row.folds} trades={row.trades} "
+                f"is={row.is_score:.3f} oos={row.oos_score:.3f} gap={row.gap:.1%}"
+            )
         return 0
     finally:
         session.close()
