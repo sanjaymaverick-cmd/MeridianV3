@@ -238,3 +238,46 @@ def test_robust_false_lowers_confidence_end_to_end(tmp_path, monkeypatch):
     assert row_a is not None and row_b is not None
     assert row_b.confidence < row_a.confidence
     assert row_b.confidence == pytest.approx(row_a.confidence * 0.7, rel=1e-6)
+
+
+def test_a_consistently_unprofitable_rule_is_not_robust():
+    """`oos_mean > 0` only asked whether the rule ever won.
+
+    A rule hitting 10% with a 3:1 payoff bleeds money steadily, but it used
+    to pass the robustness gate so long as it didn't degrade from in-sample
+    — the check tested consistency and called it profitability. It must now
+    clear the breakeven hit rate for the payoff actually traded.
+    """
+    from meridian_v3.engine.walkforward import robustness
+
+    # Consistent (no gap) but far below the 25% breakeven for 3:1.
+    verdict = robustness([0.11], [0.10], max_gap=0.35, min_oos=0.25)
+    assert verdict.robust is False
+    assert "does not pay for itself" in verdict.reason
+    # Under the old rule this exact case passed.
+    assert robustness([0.11], [0.10], max_gap=0.35, min_oos=0.0).robust is True
+
+
+def test_breakeven_tracks_the_payoff_being_traded():
+    """A wider payoff tolerates a lower hit rate, and the floor must move
+    with it rather than being a fixed number."""
+    from meridian_v3.config import Settings
+    from meridian_v3.pipeline import _breakeven_hit_rate
+
+    s = Settings()
+    assert _breakeven_hit_rate(s) == pytest.approx(0.25)  # 3:1
+
+    s.sizing.target_r_multiple = 1.0
+    assert _breakeven_hit_rate(s) == pytest.approx(0.50)  # 1:1 needs half
+    s.sizing.target_r_multiple = 9.0
+    assert _breakeven_hit_rate(s) == pytest.approx(0.10)  # 9:1 tolerates 10%
+
+
+def test_a_curve_fit_is_still_named_as_one():
+    """When a rule both collapses out-of-sample AND lands under breakeven,
+    the collapse is the more useful diagnosis — it says why."""
+    from meridian_v3.engine.walkforward import robustness
+
+    verdict = robustness([0.67], [0.0], max_gap=0.35, min_oos=0.25)
+    assert verdict.robust is False
+    assert "curve-fit" in verdict.reason.lower()

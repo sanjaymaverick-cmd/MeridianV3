@@ -59,22 +59,41 @@ def robustness(
     oos_scores: Sequence[float],
     *,
     max_gap: float = 0.35,
+    min_oos: float = 0.0,
 ) -> Robustness:
+    """Walk-forward verdict for a sequence of in/out-of-sample fold scores.
+
+    ``min_oos`` is the hit rate out-of-sample has to clear to count as
+    working. It exists because the old test was ``oos_mean > 0``, which only
+    asked whether the strategy won *ever* — a rule hitting 10% with a 3:1
+    payoff bleeds money steadily and still passed, so long as it didn't
+    degrade from in-sample. The check tested consistency and called it
+    profitability. Callers pass the breakeven hit rate for the payoff they
+    actually trade: 1 / (R + 1), so 25% at 3:1.
+    """
     if not is_scores or not oos_scores:
         return Robustness(0.0, 0.0, 1.0, False, 0, "Not enough walk-forward folds.")
     is_mean = sum(is_scores) / len(is_scores)
     oos_mean = sum(oos_scores) / len(oos_scores)
     gap = (is_mean - oos_mean) / max(abs(is_mean), 1e-6)
-    robust = oos_mean > 0 and gap <= max_gap
+    robust = oos_mean > min_oos and gap <= max_gap
     if robust:
         reason = (
-            f"Out-of-sample still makes money ({oos_mean:.3f}) and the "
-            f"in-sample gap is {gap:.0%} — the rule is allowed."
+            f"Out-of-sample still makes money ({oos_mean:.3f} against a {min_oos:.3f} "
+            f"breakeven) and the in-sample gap is {gap:.0%} — the rule is allowed."
         )
-    else:
+    elif gap > max_gap:
+        # A collapse from in-sample to out-of-sample is the more informative
+        # diagnosis when both apply — it names *why* the rate is low.
         reason = (
             f"Out-of-sample is {oos_mean:.3f} with a {gap:.0%} in-sample gap. "
             "That looks like a curve-fit. The auto engine will not size this hard."
+        )
+    else:
+        reason = (
+            f"Out-of-sample hit rate is {oos_mean:.3f}, at or under the {min_oos:.3f} "
+            "breakeven for this payoff — it holds up out-of-sample but does not pay "
+            "for itself. The auto engine will not size this hard."
         )
     return Robustness(
         is_score=is_mean,
