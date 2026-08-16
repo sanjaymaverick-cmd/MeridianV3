@@ -202,6 +202,18 @@ class GreeksCfg(BaseModel):
 
 class WatchlistCfg(BaseModel):
     active_cap: int = 200
+    # Binance lists ~490 USDT spot pairs. The crypto sleeve is taken from
+    # whatever it currently lists, cut by 24h turnover: below this the
+    # spread/slippage on a clip costs more than any modelled edge, and each
+    # extra pair is another klines round trip on every price refresh.
+    # ~$5M ≈ 40 pairs, ~$1M ≈ 130, ~$250k ≈ 290. Set 0 to take everything.
+    # $5M is the default deliberately: Indian crypto TDS is 1% of turnover
+    # per side, so a round trip costs ~2.24% before any spread. Thin names
+    # cannot carry that, and slippage there is worst, not best.
+    crypto_min_quote_volume_usd: float = 5_000_000.0
+    # Hard ceiling on the crypto sleeve regardless of the turnover cut.
+    # None = no ceiling.
+    crypto_max_symbols: int | None = None
 
 
 class AlertsCfg(BaseModel):

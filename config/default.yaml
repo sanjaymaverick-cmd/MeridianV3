@@ -152,6 +152,10 @@ greeks:
 
 watchlist:
   active_cap: 200
+  # Crypto sleeve is pulled live from Binance and cut by 24h turnover.
+  # ~$250k ≈ 290 pairs, ~$1M ≈ 130, ~$5M ≈ 40. Set 0 to take every listed pair.
+  crypto_min_quote_volume_usd: 5000000
+  crypto_max_symbols: null
 
 alerts:
   poll_seconds: 60
