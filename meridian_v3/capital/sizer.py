@@ -92,7 +92,15 @@ def size_position(
     )
     cap = risk_cap_pct(confidence, settings)
     risk_pct = min(kelly.sized, cap) * drawdown.scale
-    reserve = min(equity * settings.sizing.cash_reserve_pct, cash * 0.35)
+    # A real floor, not a sliding one. This used to be
+    #   min(equity * cash_reserve_pct, cash * 0.35)
+    # so the reserve shrank with the cash it was meant to protect: at ₹71k
+    # cash it held back ₹9,846, but at ₹300 cash it held back ₹105. Each
+    # successive clip in a cycle saw a smaller floor, and the book ran itself
+    # down to ₹106 (0.11% of equity) in a single pass while the setting said
+    # 10%. Below the reserve, `spendable` is 0 and no new clip opens — which
+    # is what a reserve is for.
+    reserve = equity * settings.sizing.cash_reserve_pct
     spendable = max(0.0, cash - reserve)
     risk_rupees = max(settings.sizing.min_risk_inr, equity * risk_pct)
     max_notional = min(spendable, equity * settings.sizing.max_position_pct)

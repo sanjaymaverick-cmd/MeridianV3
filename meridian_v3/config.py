@@ -119,8 +119,10 @@ class SizingCfg(BaseModel):
     high_confidence: float = 0.78
     live_confidence: float = 0.82
     positional_confidence: float = 0.88
-    max_concurrent_normal: int = 16
-    max_concurrent_high: int = 20
+    # Concentration over breadth: fewer, more convicted clips rather than a
+    # thin slice of everything that clears the bar. Was 16/20.
+    max_concurrent_normal: int = 8
+    max_concurrent_high: int = 10
     max_position_pct: float = 0.18
     cash_reserve_pct: float = 0.10
     # 2.9 — stop_price() uses this to tell an ATR *distance* apart from an

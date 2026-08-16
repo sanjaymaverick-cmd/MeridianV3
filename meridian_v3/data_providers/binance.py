@@ -70,7 +70,11 @@ def is_binance_symbol(symbol: str) -> bool:
     return binance_pair(symbol) in spot_roots()
 
 
-def liquid_usdt_pairs(min_quote_volume: float = 5_000_000.0, limit: int | None = None) -> list[tuple[str, float]]:
+def liquid_usdt_pairs(
+    min_quote_volume: float = 5_000_000.0,
+    limit: int | None = None,
+    min_daily_range_pct: float = 0.0015,
+) -> list[tuple[str, float]]:
     """TRADING USDT spot pairs with at least ``min_quote_volume`` of 24h
     turnover, richest first, as ``(symbol, quote_volume)``.
 
@@ -86,16 +90,38 @@ def liquid_usdt_pairs(min_quote_volume: float = 5_000_000.0, limit: int | None =
         listed = spot_roots()
         res = httpx.get(TICKER_24H, timeout=60.0)
         res.raise_for_status()
-        rows = [
-            (t["symbol"], float(t.get("quoteVolume", 0.0)))
-            for t in res.json()
-            if t.get("symbol") in listed
-        ]
+        rows = []
+        for t in res.json():
+            if t.get("symbol") not in listed:
+                continue
+            try:
+                volume = float(t.get("quoteVolume", 0.0))
+                high = float(t.get("highPrice", 0.0))
+                low = float(t.get("lowPrice", 0.0))
+            except (TypeError, ValueError):
+                continue
+            # Daily range as a fraction of price. Stablecoins are the reason
+            # this exists: USDCUSDT and RLUSDUSDT are among the highest-volume
+            # pairs Binance lists, so a turnover filter alone waves them
+            # straight through — but they move ~0.014% a day against a ~7.6%
+            # hurdle, so they cannot clear costs even in principle. The desk
+            # opened ₹35,735 of them (36% of the book) before this existed.
+            #
+            # The default sits in a real gap in the data rather than being a
+            # round guess: measured across liquid pairs, the pegged assets
+            # (USDC, USD1, U, RLUSD, EURI) span 0.009-0.061%, then there is a
+            # 6x jump to the quietest genuine coin (BTC at 0.363%). 0.15%
+            # separates them with headroom on both sides. Deliberately not
+            # higher — on a calm day BTC/ETH/XRP range under 1%, and cutting
+            # those would throw out the majors along with the pegs.
+            day_range = (high - low) / low if low > 0 else 0.0
+            rows.append((t["symbol"], volume, day_range))
     except Exception:
         return []
-    rows = [r for r in rows if r[1] >= min_quote_volume]
+    rows = [r for r in rows if r[1] >= min_quote_volume and r[2] >= min_daily_range_pct]
     rows.sort(key=lambda r: r[1], reverse=True)
-    return rows[:limit] if limit else rows
+    trimmed = rows[:limit] if limit else rows
+    return [(symbol, volume) for symbol, volume, _range in trimmed]
 
 
 def fetch_klines(symbol: str, *, futures: bool = False, limit: int = 180) -> list[dict]:

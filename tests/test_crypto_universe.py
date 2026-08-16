@@ -84,11 +84,13 @@ def test_liquid_pairs_applies_the_turnover_cut_and_orders_richest_first(monkeypa
             pass
 
         def json(self):
+            # high/low give each pair a daily range well clear of the
+            # peg filter, so this test stays about the turnover cut alone.
             return [
-                {"symbol": "AAAUSDT", "quoteVolume": "3000000"},
-                {"symbol": "BBBUSDT", "quoteVolume": "9000000"},
-                {"symbol": "DUSTUSDT", "quoteVolume": "1000"},
-                {"symbol": "NOTLISTED", "quoteVolume": "9999999999"},
+                {"symbol": "AAAUSDT", "quoteVolume": "3000000", "highPrice": "1.05", "lowPrice": "1.00"},
+                {"symbol": "BBBUSDT", "quoteVolume": "9000000", "highPrice": "2.10", "lowPrice": "2.00"},
+                {"symbol": "DUSTUSDT", "quoteVolume": "1000", "highPrice": "1.05", "lowPrice": "1.00"},
+                {"symbol": "NOTLISTED", "quoteVolume": "9999999999", "highPrice": "5.5", "lowPrice": "5.0"},
             ]
 
     monkeypatch.setattr(httpx, "get", lambda *a, **k: _Res())
@@ -151,3 +153,38 @@ def test_install_universe_deactivates_crypto_that_left_the_universe(session):
     # BTCUSDT is in the static sleeve, so it must be active.
     btc = session.query(WatchItem).filter_by(symbol="BTCUSDT").one()
     assert btc.status == "active"
+
+
+def test_pegged_assets_are_excluded_however_liquid_they_are(monkeypatch):
+    """A stablecoin cannot clear a cost hurdle it is definitionally unable to
+    reach, so turnover alone is the wrong filter.
+
+    Observed live: USDCUSDT and RLUSDUSDT are among the highest-volume pairs
+    Binance lists, sailed through the turnover cut, and the desk opened
+    Rs35,735 of them -- 36% of the book -- in instruments that move ~0.014%
+    a day against a ~7.6% hurdle.
+    """
+    import httpx
+
+    monkeypatch.setattr(
+        binance_mod, "_spot_roots_cache", {"USDCUSDT", "BTCUSDT", "WILDUSDT"}
+    )
+
+    class _Res:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return [
+                # Enormous volume, no movement: a peg.
+                {"symbol": "USDCUSDT", "quoteVolume": "900000000", "highPrice": "1.0002", "lowPrice": "1.0000"},
+                # A quiet day for a major must still qualify.
+                {"symbol": "BTCUSDT", "quoteVolume": "500000000", "highPrice": "100363", "lowPrice": "100000"},
+                {"symbol": "WILDUSDT", "quoteVolume": "20000000", "highPrice": "1.5", "lowPrice": "1.0"},
+            ]
+
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: _Res())
+    kept = {s for s, _ in binance_mod.liquid_usdt_pairs(min_quote_volume=5_000_000)}
+    assert "USDCUSDT" not in kept, "a peg must never enter the universe"
+    assert "BTCUSDT" in kept, "a calm day for BTC must not exclude it"
+    assert "WILDUSDT" in kept

@@ -92,8 +92,8 @@ sizing:
   high_confidence: 0.78
   live_confidence: 0.82
   positional_confidence: 0.88
-  max_concurrent_normal: 16
-  max_concurrent_high: 20
+  max_concurrent_normal: 8
+  max_concurrent_high: 10
   max_position_pct: 0.18
   cash_reserve_pct: 0.10
   stop_distance_ratio_ceiling: 0.45
