@@ -83,6 +83,16 @@ def persist_belief(session: Session, won: bool, rule: str = "core") -> BetaBelie
     return belief
 
 
+def _breakeven_hit_rate(settings) -> float:
+    """The hit rate a payoff has to beat just to break even.
+
+    At R:1, a win returns R and a loss costs 1, so the balance point is
+    1 / (R + 1) — 25% at the desk's 3:1 shape. `robustness` uses this as the
+    floor out-of-sample must clear, instead of merely being above zero.
+    """
+    return 1.0 / (settings.sizing.target_r_multiple + 1.0)
+
+
 def _market_robustness(session: Session, market: str, settings) -> Robustness:
     """Part 3 item 5 — walk-forward robustness verdict for one market.
 
@@ -117,7 +127,11 @@ def _market_robustness(session: Session, market: str, settings) -> Robustness:
     if folds:
         is_scores = [hit_rate(pnls[f.train_start : f.train_end]) for f in folds]
         oos_scores = [hit_rate(pnls[f.test_start : f.test_end]) for f in folds]
-        return robustness(is_scores, oos_scores, max_gap=settings.decision.walkforward_oos_gap_max)
+        return robustness(
+            is_scores, oos_scores,
+            max_gap=settings.decision.walkforward_oos_gap_max,
+            min_oos=_breakeven_hit_rate(settings),
+        )
 
     # No live folds yet. Fall back to a backtest-seeded verdict if one has
     # been persisted for this market. Without this the desk is stuck in a
@@ -135,7 +149,11 @@ def _market_robustness(session: Session, market: str, settings) -> Robustness:
             folds=seeded.folds,
             reason=seeded.reason,
         )
-    return robustness([], [], max_gap=settings.decision.walkforward_oos_gap_max)
+    return robustness(
+        [], [],
+        max_gap=settings.decision.walkforward_oos_gap_max,
+        min_oos=_breakeven_hit_rate(settings),
+    )
 
 
 def seed_robustness_from_backtest(
@@ -179,7 +197,11 @@ def seed_robustness_from_backtest(
     is_scores = [hit_rate(pnls[f.train_start : f.train_end]) for f in folds]
     oos_scores = [hit_rate(pnls[f.test_start : f.test_end]) for f in folds]
     settings = get_settings()
-    verdict = robustness(is_scores, oos_scores, max_gap=settings.decision.walkforward_oos_gap_max)
+    verdict = robustness(
+        is_scores, oos_scores,
+        max_gap=settings.decision.walkforward_oos_gap_max,
+        min_oos=_breakeven_hit_rate(settings),
+    )
 
     reason = (
         f"{verdict.reason} (Seeded from a backtest of {len(symbols)} {market} symbol(s), "
