@@ -509,13 +509,26 @@ def run_cycle(
             FactorVote("score", ((score or 5) - 5) / 5, 0.8, f"multi-factor {score}"),
             FactorVote("trend", 0.4 if cache.sma20 and cache.last > cache.sma20 else -0.3, 1.0, "tape vs average"),
         ]
+        # Part 3 items 4/5 — the routed market is resolved once here and
+        # reused for the belief key, the robustness cache lookup, and
+        # `preferred_market` itself, so all three agree on exactly the same
+        # market a symbol was scored against. Resolved before the win/loss
+        # maths below, which is market-specific for options.
+        market = market_for(item.asset_class, item.symbol)
         # The modelled win must be the same target the exit actually aims at,
         # or the pre-trade gate is pricing a trade the desk never takes. Loss
         # is the stop distance (R); win is `target_r_multiple` x R, matching
         # autopilot._exit_reason. Was a hardcoded 2.0 x ATR against a
         # 1.5 x ATR stop — a 1.33:1 model of a 2:1 exit.
         _atr = atr or cache.last * 0.015
-        loss = _atr * settings.sizing.atr_stop_mult
+        if market == "options_buy":
+            # Options don't take an ATR stop: their ATR is ~33% of premium,
+            # so 2 x ATR would be a 67% stop and the shape stops meaning
+            # anything. Loss is a fraction of premium (the sizer uses the
+            # same number), target is R multiples of that.
+            loss = cache.last * settings.markets.options_buy.stop_pct_of_premium
+        else:
+            loss = _atr * settings.sizing.atr_stop_mult
         win = loss * settings.sizing.target_r_multiple
         costs = estimate_equity_costs(notional=cache.last)
         held = session.scalar(
@@ -525,11 +538,6 @@ def run_cycle(
                 Position.status == "open",
             )
         )
-        # Part 3 items 4/5 — the routed market is resolved once here and
-        # reused for the belief key, the robustness cache lookup, and
-        # `preferred_market` itself, so all three agree on exactly the same
-        # market a symbol was scored against.
-        market = market_for(item.asset_class, item.symbol)
         decision = decide(
             DecisionInput(
                 symbol=item.symbol,

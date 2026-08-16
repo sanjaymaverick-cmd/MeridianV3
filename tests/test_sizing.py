@@ -87,3 +87,75 @@ def test_cash_reserve_is_a_floor_not_a_sliding_fraction():
     assert _plan(100.0).qty == 0
     # Comfortably above it, sizing works normally.
     assert _plan(equity).qty > 0
+
+
+def test_option_stop_is_a_fraction_of_premium_not_the_whole_of_it():
+    """An option's stop must be room to move, like every other market's.
+
+    The sizer used to set `stop = price`, i.e. the entire premium, so an
+    option never stopped out until it was worthless -- while the decision
+    gate modelled a 2 x ATR loss. The two disagreed about the same trade.
+    An ATR stop is also the wrong instrument here: a weekly ATM option's
+    daily ATR is ~33% of premium, so 2 x ATR is a 67% stop.
+    """
+    from meridian_v3.capital.sizer import size_position
+    from meridian_v3.config import Settings
+    from meridian_v3.engine.drawdown import assess_drawdown
+
+    s = Settings()
+    equity, premium = 100_000.0, 2_000.0
+    plan = size_position(
+        equity=equity, cash=equity, price=premium, atr=premium * 0.33,
+        p_success=0.65, payoff=1.5, confidence=0.7,
+        drawdown=assess_drawdown(equity, equity),
+        settings=s, market="options_buy", open_count=0,
+    )
+    assert not plan.blocked
+    expected = premium * s.markets.options_buy.stop_pct_of_premium
+    assert abs(plan.stop - expected) < 1e-6, "stop should be a fraction of premium"
+    assert plan.stop < premium, "stop must leave something to salvage"
+
+
+def test_option_premium_is_capped_by_the_risk_budget_not_just_the_premium_cap():
+    """A 12%-of-equity premium at a 50% stop risks 6% of the book on one
+    clip, against a 1.5% cap everywhere else. The premium ceiling must be
+    whichever is tighter."""
+    from meridian_v3.capital.sizer import size_position
+    from meridian_v3.config import Settings
+    from meridian_v3.engine.drawdown import assess_drawdown
+
+    s = Settings()
+    equity = 100_000.0
+    stop_pct = s.markets.options_buy.stop_pct_of_premium
+
+    def _plan(premium: float):
+        return size_position(
+            equity=equity, cash=equity, price=premium, atr=premium * 0.33,
+            p_success=0.65, payoff=1.5, confidence=0.7,
+            drawdown=assess_drawdown(equity, equity),
+            settings=s, market="options_buy", open_count=0,
+        )
+
+    # Sits inside the explicit 12% premium cap, but a stop-out would cost
+    # ~6% of the book -- must be refused.
+    fat = equity * s.markets.options_buy.max_premium_pct_of_equity
+    assert _plan(fat).blocked
+
+    # Every accepted clip stays within the normal risk budget.
+    for premium in (500.0, 1_500.0, 3_000.0):
+        plan = _plan(premium)
+        if not plan.blocked:
+            risk = premium * stop_pct
+            assert risk <= equity * s.sizing.max_risk_pct_normal + 1e-6
+
+
+def test_option_target_clears_its_own_cost_hurdle():
+    """The point of settling the shape: a 150% target has to beat the ~11.5%
+    an option round trip demands, or options can never be worth taking."""
+    from meridian_v3.config import Settings
+    from meridian_v3.engine.edge import round_trip_cost_pct
+
+    s = Settings()
+    target_pct = s.markets.options_buy.stop_pct_of_premium * s.sizing.target_r_multiple
+    hurdle = round_trip_cost_pct("options_buy") * s.decision.min_reward_cost_multiple
+    assert target_pct > hurdle * 5, f"target {target_pct:.0%} vs hurdle {hurdle:.1%}"

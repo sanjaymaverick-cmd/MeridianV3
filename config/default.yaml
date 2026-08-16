@@ -41,6 +41,9 @@ markets:
     selling_forbidden: true
     min_premium_inr: 50
     max_premium_pct_of_equity: 0.12
+    # Stop as a fraction of premium (ATR multiples exceed 100% on options).
+    # Target is target_r_multiple x this, so 0.50 -> a 150% gain.
+    stop_pct_of_premium: 0.50
   india_futures:
     enabled: true
     min_lot: 0.05
