@@ -64,6 +64,9 @@ class BacktestResult:
     wins: int = 0
     losses: int = 0
     db_path: str = ""
+    # Time-ordered realized P&L of every closed clip, for walk-forward
+    # scoring (pipeline.seed_robustness_from_backtest).
+    closed_pnls: list[float] = field(default_factory=list)
 
     @property
     def win_rate(self) -> float:
@@ -190,7 +193,13 @@ def run_backtest(
 
         from meridian_v3.storage.schema import Position
 
-        closed = list(session.scalars(select(Position).where(Position.venue == "paper", Position.status == "closed")))
+        closed = list(
+            session.scalars(
+                select(Position)
+                .where(Position.venue == "paper", Position.status == "closed")
+                .order_by(Position.closed_at.asc())
+            )
+        )
         wins = sum(1 for p in closed if (p.realized_pnl or 0) > 0)
         losses = sum(1 for p in closed if (p.realized_pnl or 0) < 0)
         final_equity = equity_curve[-1][1] if equity_curve else starting_capital
@@ -209,6 +218,7 @@ def run_backtest(
             wins=wins,
             losses=losses,
             db_path=str(db_path),
+            closed_pnls=[float(p.realized_pnl) for p in closed if p.realized_pnl is not None],
         )
         session.close()
         return result
