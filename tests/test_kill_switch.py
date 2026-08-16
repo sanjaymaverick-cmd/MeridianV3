@@ -127,7 +127,10 @@ def _input(**kwargs):
         symbol="INFY",
         price=1400,
         atr=20,
-        created_at=datetime.now(timezone.utc),
+        # Pinned to market hours, like the evaluate_safety tests above: new
+        # paper entries are blocked in a shut session, so a wall-clock
+        # `now()` here made the test's outcome depend on the day it ran.
+        created_at=_market_open_now(),
         primary=PrimarySignal(1, 1.4, "trend is up"),
         votes=[
             FactorVote("trend", 0.8, 1.0, "up"),
@@ -145,7 +148,7 @@ def _input(**kwargs):
         live_today=0,
         open_count=0,
         daily_loss_inr=0.0,
-        now=datetime.now(timezone.utc),
+        now=_market_open_now(),
     )
     base.update(kwargs)
     return DecisionInput(**base)
