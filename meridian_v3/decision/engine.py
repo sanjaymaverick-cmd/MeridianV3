@@ -19,7 +19,7 @@ from meridian_v3.domain.reviews import PlainReview, compose_decision_review
 from meridian_v3.engine.bayesian import BetaBelief, blend_confidence, start_belief
 from meridian_v3.engine.confluence import Confluence, FactorVote, score_confluence
 from meridian_v3.engine.drawdown import DrawdownState
-from meridian_v3.engine.edge import CostEstimate, filter_edge
+from meridian_v3.engine.edge import CostEstimate, estimate_trade_costs, filter_edge
 from meridian_v3.engine.freshness import apply_freshness, freshness
 from meridian_v3.engine.meta_label import MetaLabel, OnlineLogit, PrimarySignal, default_features, meta_label
 from meridian_v3.engine.walkforward import Robustness
@@ -134,25 +134,14 @@ def decide(inp: DecisionInput, settings: Settings | None = None) -> AutoDecision
             "This cash book does not short. A sell is only used to close a paper long we already hold."
         )
 
-    paper_margin = max(settings.decision.edge_safety_margin * inp.equity * 0.25, 2.0)
-    edge = filter_edge(
-        p=meta.p_success,
-        win_rupees=inp.win_rupees,
-        loss_rupees=inp.loss_rupees,
-        costs=inp.costs,
-        margin=paper_margin,
-    )
-    if action != "hold" and not edge.take:
-        action = "hold"
-        reasons.append(edge.reason)
-    reasons.append(meta.reason)
-
-    if fresh.stale:
-        action = "hold"
-        reasons.append(
-            f"The signal is {fresh.age_hours:.1f} hours old. Freshness is {fresh.value:.0%}. We wait."
-        )
-
+    # Size BEFORE the edge gate. The gate has to compare like with like:
+    # `inp.win_rupees`/`inp.loss_rupees` are per-unit ATR distances, and the
+    # safety margin below is an absolute rupee figure scaled off account
+    # equity. Comparing a per-unit edge against an absolute hurdle made the
+    # outcome depend on an instrument's *unit price* rather than on whether
+    # the trade was actually worth taking — RELIANCE at ₹1,310/share was
+    # skipped while BTCUSDT at ₹60L/coin sailed through, on identical
+    # assumptions. Sizing first lets both sides be stated per *position*.
     size = size_position(
         equity=inp.equity,
         cash=inp.cash,
@@ -169,6 +158,43 @@ def decide(inp: DecisionInput, settings: Settings | None = None) -> AutoDecision
     if size.blocked and action != "hold":
         action = "hold"
         reasons.append(size.reason)
+
+    paper_margin = max(settings.decision.edge_safety_margin * inp.equity * 0.25, 2.0)
+    if size.qty > 0:
+        # Real costs on the real position, from the same contract-note
+        # calculator that bills the fill (levy) — not a flat percentage of
+        # one unit's price, and no STT on crypto/forex.
+        position_costs = estimate_trade_costs(
+            qty=size.qty,
+            price=inp.price,
+            market=route.market,
+            product="MIS" if size.horizon == "intraday" else "CNC",
+        )
+        win_total = inp.win_rupees * size.qty
+        loss_total = inp.loss_rupees * size.qty
+    else:
+        # Nothing sized (already blocked above) — keep the per-unit shape so
+        # the reason string still reads sensibly instead of dividing by zero.
+        position_costs = inp.costs
+        win_total = inp.win_rupees
+        loss_total = inp.loss_rupees
+    edge = filter_edge(
+        p=meta.p_success,
+        win_rupees=win_total,
+        loss_rupees=loss_total,
+        costs=position_costs,
+        margin=paper_margin,
+    )
+    if action != "hold" and not edge.take:
+        action = "hold"
+        reasons.append(edge.reason)
+    reasons.append(meta.reason)
+
+    if fresh.stale:
+        action = "hold"
+        reasons.append(
+            f"The signal is {fresh.age_hours:.1f} hours old. Freshness is {fresh.value:.0%}. We wait."
+        )
 
     safety = evaluate_safety(
         drawdown=inp.drawdown,
