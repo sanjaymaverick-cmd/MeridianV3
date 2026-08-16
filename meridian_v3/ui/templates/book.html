@@ -8,6 +8,31 @@
     <p class="lede">Tape P&amp;L is the price move only. Fees are the contract note. Net is tape minus fees. When both sides print the same mark, tape is ₹0 and net equals the bill — those are not the same column.</p>
   </div>
 </section>
+{% if outcomes and outcomes.total %}
+<article class="panel" id="panel-outcomes">
+  <div class="panel-head">
+    <h2>What the closed trades actually were</h2>
+    <span class="meta">{{ outcomes.total }} settled paper clips</span>
+  </div>
+  <div class="alloc">
+    {% if outcomes.wins %}<span style="width:{{ outcomes.wins_pct }}%;background:var(--up)" title="Genuine wins"></span>{% endif %}
+    {% if outcomes.losses %}<span style="width:{{ outcomes.losses_pct }}%;background:var(--down)" title="Genuine losses"></span>{% endif %}
+    {% if outcomes.scratch %}<span style="width:{{ outcomes.scratch_pct }}%;background:var(--line)" title="Fee-only scratches"></span>{% endif %}
+  </div>
+  <div class="alloc-key">
+    <span><i style="background:var(--up)"></i>Genuine wins {{ outcomes.wins }} ({{ outcomes.wins_pct }}%)</span>
+    <span><i style="background:var(--down)"></i>Genuine losses {{ outcomes.losses }} ({{ outcomes.losses_pct }}%)</span>
+    <span><i style="background:var(--line)"></i>Fee-only scratch {{ outcomes.scratch }} ({{ outcomes.scratch_pct }}%)</span>
+  </div>
+  <p class="meta" style="margin-top:12px">
+    A scratch closed within 0.2% of where it opened — the price never moved enough to test
+    the signal, so the only thing that changed hands was fees. Only <strong>{{ outcomes.real }}</strong>
+    of these {{ outcomes.total }} clips were a real directional outcome. Counting scratches as
+    losses is what teaches the model that trading loses.
+  </p>
+</article>
+{% endif %}
+
 <article class="panel" id="panel-charges">
   <h2>Charges paid · {{ broker_label }}</h2>
   <p class="figure">{{ charges.fees | inr }}</p>

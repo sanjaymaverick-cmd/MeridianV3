@@ -156,6 +156,80 @@ def command(request: Request):
     )
 
 
+def _decision_funnel(session) -> dict:
+    """Where the most recent cycle's signals died.
+
+    The single most-asked question about this desk is "why isn't it
+    trading?", and the honest answer is always a stage in this funnel. The
+    reason strings are the same ones written into each SignalRow, so this
+    counts what actually happened rather than re-deriving it.
+    """
+    last = session.scalar(select(SignalRow.created_at).order_by(SignalRow.id.desc()))
+    if last is None:
+        return {"stages": [], "total": 0}
+    rows = list(session.scalars(select(SignalRow).where(SignalRow.created_at == last)))
+    total = len(rows)
+
+    no_side = sum(1 for r in rows if "no side to bet" in (r.reason or ""))
+    meta_skip = sum(1 for r in rows if "second model is not sure enough" in (r.reason or ""))
+    cost_skip = sum(1 for r in rows if "worth the friction" in (r.reason or ""))
+    edge_skip = sum(1 for r in rows if "costs plus a safety pad" in (r.reason or ""))
+    safety_skip = sum(1 for r in rows if "safety gate refused" in (r.reason or ""))
+    took = sum(1 for r in rows if r.paper)
+
+    directional = total - no_side
+    past_meta = directional - meta_skip
+    past_cost = past_meta - cost_skip - edge_skip
+
+    stages = [
+        {"k": "Evaluated", "n": total, "note": "every symbol with a live price"},
+        {"k": "Had a direction", "n": directional, "note": f"{no_side} had no side to bet"},
+        {"k": "Second model agreed", "n": max(0, past_meta), "note": f"{meta_skip} judged not sure enough"},
+        {"k": "Worth the cost", "n": max(0, past_cost), "note": f"{cost_skip + edge_skip} could not cover fees"},
+        {"k": "Traded", "n": took, "note": f"{safety_skip} refused by a safety gate"},
+    ]
+    top = max((s["n"] for s in stages), default=1) or 1
+    for s in stages:
+        s["pct"] = round(s["n"] / top * 100, 1)
+    return {"stages": stages, "total": total, "at": last}
+
+
+def _outcome_mix(session) -> dict:
+    """Genuine wins/losses versus fee-only scratches.
+
+    A clip closed within a whisker of its entry didn't test the signal at
+    all — the only thing that changed hands was fees. Counting those as
+    losses is what taught the online model that everything loses, so the
+    split is shown explicitly rather than folded into a win rate.
+    """
+    rows = list(
+        session.scalars(
+            select(Position).where(
+                Position.venue == "paper",
+                Position.status == "closed",
+                Position.realized_pnl.is_not(None),
+            )
+        )
+    )
+    scratch = wins = losses = 0
+    for p in rows:
+        if not p.avg_price or not p.exit_price:
+            continue
+        if abs(p.exit_price / p.avg_price - 1) < 0.002:
+            scratch += 1
+        elif (p.realized_pnl or 0) > 0:
+            wins += 1
+        else:
+            losses += 1
+    total = scratch + wins + losses
+    pct = lambda n: round(n / total * 100, 1) if total else 0.0
+    return {
+        "total": total, "scratch": scratch, "wins": wins, "losses": losses,
+        "scratch_pct": pct(scratch), "wins_pct": pct(wins), "losses_pct": pct(losses),
+        "real": wins + losses,
+    }
+
+
 def _allocation_slices(positions, paper) -> list[dict]:
     """Where the book's money actually sits, as percentage slices."""
     if not paper or not paper.equity:
@@ -276,7 +350,7 @@ def signals_page(request: Request, before: int | None = None):
     events = list(session.scalars(select(DeskEvent).order_by(DeskEvent.created_at.desc()).limit(20)))
     grouped = _group_signals_by_symbol(session)
     return _render(
-        request, "signals.html", "signals",
+        request, "signals.html", "signals", funnel=_decision_funnel(session),
         rows=rows, events=events, next_cursor=next_cursor, grouped=grouped,
     )
 
@@ -328,6 +402,7 @@ def book(request: Request, before: int | None = None):
     # written, not just this page, so it deliberately keeps its own
     # full-history query rather than reusing the paginated slice above.
     all_fills_for_charges = list(session.scalars(select(Fill)))
+    outcomes = _outcome_mix(session)
     return _render(
         request,
         "book.html",
@@ -344,6 +419,7 @@ def book(request: Request, before: int | None = None):
         charges=summarize_charges(all_fills_for_charges),
         broker=broker,
         broker_label=broker_label(broker),
+        outcomes=outcomes,
     )
 
 
