@@ -200,9 +200,10 @@ def manage_exits(
         entry_avg = float(pos.avg_price or 0.0)
         out = oms.close_position(pos, price=last, reason=reason)
         if out.get("ok"):
-            # A same-mark EOD/weekend flatten with no real move is a cost-only
-            # scratch, not a directional loss — it must not poison the belief.
-            if not _is_costonly_flatten(reason, entry_avg, last, settings):
+            # A close with no real price move is a cost-only scratch, not a
+            # directional outcome — it must not train the belief or logit,
+            # whatever the exit reason claims happened.
+            if not _is_costonly_close(reason, entry_avg, last, settings):
                 _train_from_close(session, pos, won=float(out.get("pnl") or 0) > 0)
             closed += 1
             symbols.append(pos.symbol)
@@ -253,7 +254,7 @@ def flatten_india_paper(
         entry_avg = float(pos.avg_price or 0.0)
         out = oms.close_position(pos, price=last, reason=INDIA_WEEKEND_FLATTEN)
         if out.get("ok"):
-            if not _is_costonly_flatten(INDIA_WEEKEND_FLATTEN, entry_avg, last, settings):
+            if not _is_costonly_close(INDIA_WEEKEND_FLATTEN, entry_avg, last, settings):
                 _train_from_close(session, pos, won=float(out.get("pnl") or 0) > 0)
             symbols.append(pos.symbol)
     paper = session.scalar(select(AccountState).where(AccountState.venue == "paper"))
@@ -292,17 +293,26 @@ def _train_from_close(session: Session, pos: Position, won: bool) -> None:
         persist_logit_update(session, features, won)
 
 
-def _is_costonly_flatten(reason: str, avg: float, exit_mark: float, settings) -> bool:
-    """True for a session-flatten that closed at essentially the same mark.
+def _is_costonly_close(reason: str, avg: float, exit_mark: float, settings) -> bool:
+    """True for any close where the price never actually moved.
 
-    Only EOD / weekend flattens qualify — a genuine stop, target, or tape-flip
-    always trains the belief. A flatten where |exit − entry| is within
-    ``execution.flat_scratch_pct`` of entry moved nothing directional; it only
-    paid fees, so it is bucketed as a no-signal scratch and skipped.
+    The label must come from what the price did, not from what the exit
+    reason claims. This used to fire only for EOD/weekend flattens, on the
+    theory that a stop or target implies real movement. It doesn't: a stop
+    line computed off a bad mark fires at the entry price, and the close is
+    then recorded as a directional loss despite nothing having happened.
+
+    That distinction is not academic. Of this book's first 107 closed paper
+    clips, 101 finished within 0.2% of their entry — fee-only scratches
+    mislabelled as outcomes. The online logistic trained on them and learned
+    every feature predicts failure (including a *negative* weight on
+    confluence, i.e. "more agreement means a worse trade"), which pushed
+    p_success under the meta-label's floor and stopped the desk trading at
+    all. It could not trade its way out, because it needed trades to unlearn.
+
+    ``reason`` is no longer used to decide this and is kept only so the call
+    sites read clearly; a scratch is a scratch however it was closed.
     """
-    is_flatten = reason.startswith("End of day") or reason == INDIA_WEEKEND_FLATTEN
-    if not is_flatten:
-        return False
     avg = float(avg or 0.0)
     if avg <= 0:
         return False

@@ -94,8 +94,21 @@ class OnlineLogit:
 
     def __init__(self, lr: float = 0.08) -> None:
         self.lr = lr
-        self.bias = 0.0
-        self.weights: dict[str, float] = {}
+        # Seeded with the cold-start formula rather than zeros. This used to
+        # start at bias=0 / no weights, so the very first update threw the
+        # cold-start prior away and dropped straight to sigmoid(0) = 0.50 —
+        # a cliff from ~0.76 on a strong signal. One losing trade then took
+        # p_success to 0.43, under the 0.55 meta-label floor, and the desk
+        # could never trade again to earn its way back: a one-way trapdoor
+        # that shut the whole book after a single loss.
+        #
+        # Expressed as a plain linear model, `_cold_start_p`'s z is
+        #   0.20 + 0.90(conf-0.5) + 0.55*primary + 0.25(fresh-0.5) + 0.15(cheap-0.5)
+        # = -0.45 + 0.90*conf + 0.55*primary + 0.25*fresh + 0.15*cheap
+        # so seeding those coefficients makes `predict` continuous across the
+        # first update, and learning refines the prior instead of discarding it.
+        self.bias = _COLD_START_BIAS
+        self.weights: dict[str, float] = dict(_COLD_START_WEIGHTS)
         self.updates = 0
 
     @property
@@ -103,8 +116,6 @@ class OnlineLogit:
         return self.updates > 0
 
     def predict(self, features: dict[str, float]) -> float:
-        if not self.trained:
-            return _cold_start_p(features)
         z = self.bias
         for key, value in features.items():
             z += self.weights.get(key, 0.0) * value
@@ -119,6 +130,17 @@ class OnlineLogit:
             self.weights[key] = self.weights.get(key, 0.0) + self.lr * err * value
         self.updates += 1
         return self.predict(features)
+
+
+# The cold-start prior, in linear form. `OnlineLogit` is seeded with these so
+# its first update refines the prior rather than replacing it — see __init__.
+_COLD_START_BIAS = 0.20 - 0.90 * 0.5 - 0.25 * 0.5 - 0.15 * 0.5
+_COLD_START_WEIGHTS: dict[str, float] = {
+    "confluence": 0.90,
+    "primary": 0.55,
+    "freshness": 0.25,
+    "cheap": 0.15,
+}
 
 
 def _cold_start_p(features: dict[str, float]) -> float:
