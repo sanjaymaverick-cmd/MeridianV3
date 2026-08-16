@@ -176,6 +176,14 @@ class DecisionCfg(BaseModel):
     # the confidence that closed clip was opened on (F16).
     reentry_cooldown_sec: int = 300
     reentry_confidence_margin: float = 0.05
+    # The modelled target must be at least this multiple of the *round-trip*
+    # cost before a trade is worth taking. Without it the desk churned:
+    # measured over its own closed history, the median absolute price move at
+    # exit was 0.00% and 96% of exits moved less than crypto's 2.236%
+    # round-trip floor — it was systematically closing before a trade could
+    # pay for itself. Scales per market automatically, since the cost side is
+    # market-specific (commodities ~0.047%, equity ~0.222%, crypto ~2.236%).
+    min_reward_cost_multiple: float = 3.0
 
 
 class RegimeCfg(BaseModel):

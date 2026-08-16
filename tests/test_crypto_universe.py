@@ -113,3 +113,41 @@ def test_install_universe_skips_the_network_under_a_test_db(session):
     finally:
         crypto_mod.expand_binance_universe = monkey_target
     assert called == []  # MERIDIAN_V3_TEST_DB is set by conftest
+
+
+def test_install_universe_deactivates_crypto_that_left_the_universe(session):
+    """The crypto sleeve is declarative, not add-only.
+
+    Raising the turnover floor (or a coin's volume falling below it) must
+    remove it from the active watchlist. Observed live: a manual prune of
+    248 thin pairs was silently reverted wholesale by a later install,
+    because install only ever added and re-activated.
+    """
+    from datetime import datetime, timezone
+
+    from meridian_v3.storage.schema import WatchItem
+    from meridian_v3.universe.nse_bse import install_universe
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    # A thin coin that is NOT in the static BINANCE_UNIVERSE fallback.
+    session.add(
+        WatchItem(symbol="DUSTCOINUSDT", asset_class="crypto", status="active",
+                  notes="thin", created_at=now, updated_at=now)
+    )
+    # A hand-deactivated equity must stay deactivated — this rule is scoped
+    # to the dynamic crypto sleeve only.
+    session.add(
+        WatchItem(symbol="RELIANCE", asset_class="equity", status="inactive",
+                  notes="user turned this off", created_at=now, updated_at=now)
+    )
+    session.flush()
+
+    install_universe(session)
+    session.flush()
+
+    dust = session.query(WatchItem).filter_by(symbol="DUSTCOINUSDT").one()
+    assert dust.status == "inactive", "a coin outside the universe must be deactivated"
+
+    # BTCUSDT is in the static sleeve, so it must be active.
+    btc = session.query(WatchItem).filter_by(symbol="BTCUSDT").one()
+    assert btc.status == "active"

@@ -188,6 +188,27 @@ def decide(inp: DecisionInput, settings: Settings | None = None) -> AutoDecision
     if action != "hold" and not edge.take:
         action = "hold"
         reasons.append(edge.reason)
+
+    # Hunt moves that are worth the friction. A positive expected value is
+    # not enough on its own: measured over this desk's own closed history the
+    # median absolute price move at exit was 0.00%, and 96% of exits moved
+    # less than crypto's 2.236% round-trip cost — it was paying the spread
+    # over and over for moves that could never cover it. Require the target
+    # itself to clear a multiple of the full round-trip cost. Because the
+    # cost side is market-specific, this scales on its own: the same rule is
+    # lenient on a commodity (~0.047% round trip) and demanding on a coin
+    # (~2.236%), which is exactly the intent.
+    multiple = settings.decision.min_reward_cost_multiple
+    if action != "hold" and multiple > 0 and size.qty > 0:
+        hurdle = position_costs.total * multiple
+        if win_total < hurdle:
+            action = "hold"
+            notional = size.qty * inp.price
+            reasons.append(
+                f"Target ₹{win_total:,.0f} is under {multiple:g}x the round-trip cost "
+                f"₹{position_costs.total:,.0f} on a ₹{notional:,.0f} clip. "
+                "Too small a move to be worth the friction — we wait for a bigger one."
+            )
     reasons.append(meta.reason)
 
     if fresh.stale:

@@ -203,6 +203,28 @@ def install_universe(session: Session) -> int:
         if row.status != "active":
             row.status = "active"
             written += 1
+
+    # The crypto sleeve is declarative: it must end up matching whatever the
+    # turnover cut currently selects, not just grow. Without this, install is
+    # add-only — a symbol dropped from the universe (because its turnover fell
+    # below the floor, or because the floor was raised) stays active forever,
+    # and any manual prune is silently undone the next time someone seeds.
+    # Observed exactly that: raising the floor to $5M and pruning 248 thin
+    # pairs was reverted wholesale by a later install.
+    #
+    # Scoped to the dynamic crypto sleeve on purpose. The equity/commodity/FX
+    # lists are static, and a symbol the user deactivated by hand there should
+    # stay deactivated.
+    for symbol, row in have.items():
+        if row.status != "active":
+            continue
+        if row.asset_class != "crypto":
+            continue
+        if symbol in wanted:
+            continue
+        row.status = "inactive"
+        row.updated_at = now
+        written += 1
     if written:
         session.flush()
     return written

@@ -84,6 +84,7 @@ def estimate_trade_costs(
     market: str,
     broker: str = "zerodha",
     product: str = "CNC",
+    round_trip: bool = True,
 ) -> CostEstimate:
     """Real, market-aware costs for an *actual* position.
 
@@ -105,16 +106,32 @@ def estimate_trade_costs(
     """
     from meridian_v3.charges.indian import levy
 
-    bill = levy(broker=broker, market=market, side="buy", qty=qty, price=price, product=product)
+    legs = ("buy", "sell") if round_trip else ("buy",)
+    bills = [levy(broker=broker, market=market, side=s, qty=qty, price=price, product=product) for s in legs]
     notional = abs(qty) * abs(price)
+    n = len(legs)
     return CostEstimate(
-        brokerage=bill.brokerage + bill.gst,
+        brokerage=sum(b.brokerage + b.gst for b in bills),
         # Everything statutory that isn't brokerage/GST, folded into the
         # existing four-field shape rather than widening CostEstimate.
-        stt=bill.stt + bill.exchange + bill.sebi + bill.stamp + bill.tds,
-        slippage=notional * _SLIPPAGE_PCT.get(market, 0.0008),
-        spread=notional * _SPREAD_PCT.get(market, 0.0004),
+        stt=sum(b.stt + b.exchange + b.sebi + b.stamp + b.tds for b in bills),
+        slippage=notional * _SLIPPAGE_PCT.get(market, 0.0008) * n,
+        spread=notional * _SPREAD_PCT.get(market, 0.0004) * n,
     )
+
+
+def round_trip_cost_pct(market: str, *, notional: float = 100_000.0, broker: str = "zerodha") -> float:
+    """Round-trip cost as a fraction of notional, for one market.
+
+    Costs vary by ~48x across the markets this desk trades: global
+    commodities and forex round-trip at ~0.047%, equity at ~0.222%, and
+    crypto at ~2.236% — the last almost entirely India's 1% VDA TDS, which
+    is charged on *each* transfer, so a USDT-quoted pair (a VDA-to-VDA
+    trade) pays it on both legs. A target that is generous on a commodity
+    can be arithmetically unreachable on a coin.
+    """
+    est = estimate_trade_costs(qty=1.0, price=notional, market=market, broker=broker, round_trip=True)
+    return est.total / notional if notional else 0.0
 
 
 def estimate_option_costs(

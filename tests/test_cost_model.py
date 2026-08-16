@@ -113,3 +113,81 @@ def test_decide_gate_no_longer_depends_on_unit_price():
     cheap = _verdict(1310.0)
     dear = _verdict(6_020_524.0)
     assert cheap == dear, f"unit price still drives the verdict: ₹1,310 -> {cheap}, ₹60L -> {dear}"
+
+
+def test_costs_are_charged_for_the_round_trip_not_one_leg():
+    """A trade is an entry AND an exit. The gate previously priced only the
+    buy leg, understating true cost by roughly half."""
+    one = estimate_trade_costs(qty=1, price=100_000, market="crypto_spot", round_trip=False).total
+    both = estimate_trade_costs(qty=1, price=100_000, market="crypto_spot", round_trip=True).total
+    assert both > one * 1.8
+
+
+def test_round_trip_cost_reflects_indias_crypto_tds():
+    """1% VDA TDS per transfer. A USDT-quoted pair is VDA-to-VDA, so both
+    legs pay it — ~2.24% of turnover in statutory cost alone, before spread.
+    Equity, by contrast, round-trips at well under half a percent."""
+    from meridian_v3.engine.edge import round_trip_cost_pct
+
+    crypto = round_trip_cost_pct("crypto_spot")
+    equity = round_trip_cost_pct("equity_cash")
+    commodity = round_trip_cost_pct("global_commodities")
+    assert crypto > 0.02          # >2%
+    assert equity < 0.006         # <0.6%
+    assert crypto > equity * 4    # crypto is the expensive venue by a wide margin
+    assert commodity < equity
+
+
+def test_reward_to_cost_gate_is_a_p_independent_floor():
+    """A p-independent reward floor, on top of the EV test.
+
+    `filter_edge` is probability-weighted: a high enough `p_success` makes a
+    tiny move look +EV. This desk's own honest rebuild measured a 5.3% clean
+    win rate, so over-trusting p is a live risk. The reward gate refuses on
+    the raw target regardless of p — measured over its closed history the
+    median absolute move at exit was 0.00%, and 96% of exits moved less than
+    crypto's round-trip cost.
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from meridian_v3.config import Settings
+    from meridian_v3.decision.engine import DecisionInput, decide
+    from meridian_v3.engine.confluence import FactorVote
+    from meridian_v3.engine.drawdown import assess_drawdown
+    from meridian_v3.engine.meta_label import PrimarySignal
+
+    now = datetime(2026, 8, 17, 11, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+
+    def _decide(multiple: float):
+        price, atr = 100_000.0, 4_000.0  # 4% ATR -> 8% target, clears EV easily
+        settings = Settings()
+        settings.decision.min_reward_cost_multiple = multiple
+        return decide(
+            DecisionInput(
+                symbol="BTCUSDT", price=price, atr=atr, created_at=now,
+                primary=PrimarySignal(1, 1.4, "trend is up"),
+                votes=[
+                    FactorVote("trend", 0.8, 1.0, "up"),
+                    FactorVote("breakout", 0.6, 0.8, "high"),
+                    FactorVote("score", 0.5, 0.7, "quality"),
+                ],
+                win_rupees=atr * 2.0, loss_rupees=atr * 1.5,
+                costs=estimate_equity_costs(notional=price), payoff=1.33,
+                equity=100_000, cash=100_000,
+                drawdown=assess_drawdown(100_000, 100_000),
+                live_armed=False, live_today=0, open_count=0,
+                preferred_market="crypto_spot", now=now,
+            ),
+            settings,
+        )
+
+    # This signal is +EV and tradeable at the default multiple.
+    assert _decide(3.0).action == "buy"
+
+    # Demand a far bigger reward-to-cost ratio and the *same* +EV signal is
+    # refused, with the reason naming the friction. Only this gate can do
+    # that -- the EV test already passed.
+    strict = _decide(12.0)
+    assert strict.action == "hold"
+    assert any("worth the friction" in r for r in strict.reasons)
