@@ -3,6 +3,7 @@ from zoneinfo import ZoneInfo
 
 from meridian_v3.capital.sizer import size_position
 from meridian_v3.config import Settings
+from meridian_v3.engine.confluence import FactorVote
 from meridian_v3.engine.drawdown import assess_drawdown
 from meridian_v3.router.calendar import coverage_note, market_session
 from meridian_v3.router.markets import market_for, route_market
@@ -236,3 +237,39 @@ def test_repair_lifts_ten_x_commodity_avg(session):
     assert abs(pos.avg_price - 423_642.60) < 1.0
     paper = session.query(AccountState).filter_by(venue="paper").one()
     assert paper.cash < 50_000
+
+
+def test_a_safety_refusal_says_so_in_the_reasons():
+    """A signal good enough to trade but refused by a safety gate must SAY
+    the gate refused it. Observed: commodity rows on a Sunday logged "We
+    take the paper trade" while `paper` was False, because the safety
+    verdict's own reasons were computed and then dropped."""
+    from meridian_v3.decision.engine import DecisionInput, decide
+    from meridian_v3.engine.edge import CostEstimate
+    from meridian_v3.engine.meta_label import PrimarySignal
+
+    sunday = datetime(2026, 8, 16, 9, 0, tzinfo=IST)
+    d = decide(
+        DecisionInput(
+            symbol="GOLD.X", price=420_000, atr=8_400, created_at=sunday,
+            primary=PrimarySignal(1, 1.4, "trend is up"),
+            votes=[
+                FactorVote("trend", 0.8, 1.0, "up"),
+                FactorVote("breakout", 0.6, 0.8, "high"),
+                FactorVote("score", 0.5, 0.7, "quality"),
+            ],
+            win_rupees=16_800, loss_rupees=12_600,
+            costs=CostEstimate(1, 1, 1, 1), payoff=1.33,
+            equity=100_000, cash=100_000,
+            drawdown=assess_drawdown(100_000, 100_000),
+            live_armed=False, live_today=0, open_count=0,
+            preferred_market="global_commodities", now=sunday,
+        ),
+        Settings(),
+    )
+    assert d.paper is False
+    blob = " ".join(d.reasons)
+    assert "safety gate refused" in blob
+    assert "executable price" in blob
+    # And it must NOT claim it took the trade.
+    assert "Paper trade is written" not in blob

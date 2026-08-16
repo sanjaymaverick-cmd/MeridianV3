@@ -224,6 +224,13 @@ def decide(inp: DecisionInput, settings: Settings | None = None) -> AutoDecision
         and confidence >= settings.decision.live_min_confidence
         and conf.score >= settings.decision.live_min_confluence
     )
+    if action != "hold" and not size.blocked and not safety.allow_paper:
+        # The signal itself was good enough to trade — safety refused it.
+        # Without this the log read "We take the paper trade" on a row whose
+        # `paper` flag was False, which is exactly the kind of reasoning that
+        # says one thing and does another.
+        reasons.extend(safety.reasons)
+        reasons.append("No paper trade: a safety gate refused it.")
     if paper and not live:
         reasons.append(
             "Paper trade is written. Live stays closed unless confidence, confluence, "
