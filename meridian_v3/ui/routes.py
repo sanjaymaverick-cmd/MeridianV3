@@ -5,7 +5,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, File, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from loguru import logger
 from sqlalchemy import func, select
@@ -32,6 +32,7 @@ from meridian_v3.storage.db import get_session
 from meridian_v3.storage.schema import (
     AccountState,
     DeskEvent,
+    EquityPoint,
     Fill,
     Holding,
     Position,
@@ -40,6 +41,7 @@ from meridian_v3.storage.schema import (
     WatchItem,
 )
 from meridian_v3.storage.seed import seed_demo
+from meridian_v3.ui.glossary import glossary_payload
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).resolve().parent / "templates"))
 TEMPLATES.env.cache = None
@@ -100,6 +102,16 @@ def _ctx(request: Request, active: str, **extra):
     }
 
 
+@router.get("/api/glossary")
+def api_glossary() -> dict:
+    """Plain-English definitions for desk jargon, for the hover tooltips.
+
+    Static per build, so the browser is told it may cache it for an hour
+    rather than refetching on every page view.
+    """
+    return JSONResponse(glossary_payload(), headers={"Cache-Control": "public, max-age=3600"})
+
+
 @router.get("/", response_class=HTMLResponse)
 def command(request: Request):
     session = request.state.session
@@ -111,10 +123,93 @@ def command(request: Request):
     positions = decorate_positions(
         session, list(session.scalars(select(Position).where(Position.status == "open")))
     )
+    settings = get_settings()
+    # Infographic inputs. Kept as plain numbers here rather than built in the
+    # template, so the page stays markup and the arithmetic stays testable.
+    equity_points = list(
+        session.scalars(
+            select(EquityPoint.equity)
+            .where(EquityPoint.venue == "paper")
+            .order_by(EquityPoint.as_of.desc())
+            .limit(60)
+        )
+    )
+    infographic = {
+        "spark": list(reversed([round(float(v), 2) for v in equity_points])),
+        # Drawdown as a fraction of the pause threshold: 1.0 means the desk
+        # has hit the line where it stops opening new positions.
+        "dd_ratio": (
+            min(1.0, paper_dd.drawdown / settings.safety.drawdown_pause_pct)
+            if paper_dd and settings.safety.drawdown_pause_pct
+            else 0.0
+        ),
+        "dd_pause_pct": settings.safety.drawdown_pause_pct,
+        "open_count": len(positions),
+        "max_open": settings.sizing.max_concurrent_normal,
+        "allocation": _allocation_slices(positions, paper),
+        "cost_bars": _cost_vs_target_bars(settings),
+    }
     return _render(
         request, "command.html", "command",
         paper_dd=paper_dd, live_dd=live_dd, signals=signals, positions=positions,
+        info=infographic,
     )
+
+
+def _allocation_slices(positions, paper) -> list[dict]:
+    """Where the book's money actually sits, as percentage slices."""
+    if not paper or not paper.equity:
+        return []
+    tones = {
+        "equity_cash": "#c4a35a",
+        "crypto_spot": "#4a9b7f",
+        "global_commodities": "#8a7340",
+        "forex_micro": "#6b7380",
+        "india_futures": "#9aa3b2",
+    }
+    # decorate_positions() hands back dicts, not ORM rows.
+    by_market: dict[str, float] = {}
+    for p in positions:
+        value = (p.get("current") or 0) * (p.get("qty") or 0)
+        market = p.get("market") or "other"
+        by_market[market] = by_market.get(market, 0.0) + value
+    out = [
+        {
+            "market": market,
+            "pct": round(value / paper.equity * 100, 1),
+            "tone": tones.get(market, "#3a4150"),
+        }
+        for market, value in sorted(by_market.items(), key=lambda kv: -kv[1])
+        if value > 0
+    ]
+    cash_pct = round(max(0.0, paper.cash) / paper.equity * 100, 1)
+    if cash_pct > 0:
+        out.append({"market": "cash", "pct": cash_pct, "tone": "#1c2433"})
+    return out
+
+
+def _cost_vs_target_bars(settings) -> list[dict]:
+    """What each market's target has to clear before a trade is worth taking.
+
+    The bar is the required target move; the red marker is the round-trip
+    cost it has to beat. Costs differ ~10x across these venues (crypto's 1%
+    VDA TDS is charged on both legs), so a target that is generous on a
+    commodity can be unreachable on a coin — this is the one view that makes
+    that visible at a glance.
+    """
+    from meridian_v3.engine.edge import round_trip_cost_pct
+
+    multiple = settings.decision.min_reward_cost_multiple
+    rows = []
+    for market in ("global_commodities", "forex_micro", "india_futures", "equity_cash", "crypto_spot"):
+        cost = round_trip_cost_pct(market) * 100
+        need = cost * multiple
+        rows.append({"market": market, "cost": round(cost, 3), "need": round(need, 2)})
+    ceiling = max((r["need"] for r in rows), default=1.0) or 1.0
+    for r in rows:
+        r["fill_pct"] = round(r["need"] / ceiling * 100, 1)
+        r["marker_pct"] = round(r["cost"] / ceiling * 100, 1)
+    return rows
 
 
 def _group_signals_by_symbol(session, window: int = 500) -> list[dict]:
