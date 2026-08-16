@@ -509,8 +509,14 @@ def run_cycle(
             FactorVote("score", ((score or 5) - 5) / 5, 0.8, f"multi-factor {score}"),
             FactorVote("trend", 0.4 if cache.sma20 and cache.last > cache.sma20 else -0.3, 1.0, "tape vs average"),
         ]
-        win = (atr or cache.last * 0.015) * 2.0
-        loss = (atr or cache.last * 0.015) * settings.sizing.atr_stop_mult
+        # The modelled win must be the same target the exit actually aims at,
+        # or the pre-trade gate is pricing a trade the desk never takes. Loss
+        # is the stop distance (R); win is `target_r_multiple` x R, matching
+        # autopilot._exit_reason. Was a hardcoded 2.0 x ATR against a
+        # 1.5 x ATR stop — a 1.33:1 model of a 2:1 exit.
+        _atr = atr or cache.last * 0.015
+        loss = _atr * settings.sizing.atr_stop_mult
+        win = loss * settings.sizing.target_r_multiple
         costs = estimate_equity_costs(notional=cache.last)
         held = session.scalar(
             select(Position).where(

@@ -273,3 +273,43 @@ def test_a_safety_refusal_says_so_in_the_reasons():
     assert "executable price" in blob
     # And it must NOT claim it took the trade.
     assert "Paper trade is written" not in blob
+
+
+def test_option_volatility_is_delta_scaled_not_price_scaled(session):
+    """An option's price is a small fraction of spot; its *movement* is not.
+
+    `_copy_cache` used to multiply ATR by the same premium ratio as the
+    price, so an option came out with the identical percentage volatility as
+    its underlying. A premium actually moves by roughly delta x the
+    underlying's move in absolute rupees, which is a far larger share of a
+    small premium. Understating it made every option look too sleepy to
+    clear its own (wide) spread, so none ever passed the reward-to-cost gate.
+    """
+    from datetime import datetime, timezone
+
+    from meridian_v3.data_providers.service import _copy_cache
+    from meridian_v3.storage.schema import PriceCache
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    session.add(PriceCache(symbol="NIFTY", last=25_000.0, atr=250.0, as_of=now, quality="live"))
+    session.flush()
+
+    assert _copy_cache(session, "NIFTY", "NIFTY.C", now, scale=0.015, delta=0.5)
+    session.flush()
+    opt = session.query(PriceCache).filter_by(symbol="NIFTY.C").one()
+
+    # Price is the premium ratio ...
+    assert abs(opt.last - 25_000.0 * 0.015) < 1e-6
+    # ... but movement is delta-scaled, so ATR as a share of premium is far
+    # larger than the underlying's 1%.
+    underlying_atr_pct = 250.0 / 25_000.0
+    option_atr_pct = opt.atr / opt.last
+    assert option_atr_pct > underlying_atr_pct * 10, (
+        f"option ATR {option_atr_pct:.1%} should dwarf underlying {underlying_atr_pct:.1%}"
+    )
+
+    # A future with no delta still tracks the underlying one-for-one.
+    assert _copy_cache(session, "NIFTY", "NIFTY.F", now, scale=1.0)
+    session.flush()
+    fut = session.query(PriceCache).filter_by(symbol="NIFTY.F").one()
+    assert abs(fut.atr - 250.0) < 1e-6

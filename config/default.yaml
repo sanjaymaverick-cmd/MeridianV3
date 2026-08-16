@@ -83,7 +83,9 @@ sizing:
   kelly_fraction: 0.15
   min_kelly_fraction: 0.05
   max_kelly_fraction: 0.25
-  atr_stop_mult: 1.5
+  atr_stop_mult: 2.0
+  # Target = this many multiples of the stop distance (3.0 = 3:1 reward:risk)
+  target_r_multiple: 3.0
   atr_period: 14
   max_risk_pct_high_conf: 0.04
   max_risk_pct_normal: 0.015
