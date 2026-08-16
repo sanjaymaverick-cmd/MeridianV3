@@ -231,3 +231,71 @@ def run_backtest(
             os.environ["MERIDIAN_V3_TEST_DB"] = original_test_db
         reset_settings_cache()
         reset_engine()
+
+
+# ── Parallel execution ──────────────────────────────────────────────────
+# `run_backtest` is a *portfolio* simulation: one book, one cash balance,
+# one concurrency cap, and a day loop whose state carries forward. That loop
+# cannot be parallelised without changing what it measures.
+#
+# What can run in parallel is several *independent books*. Splitting the
+# universe into chunks and giving each its own book is a different
+# experiment from one book trading everything — smaller universes contend
+# less for the concurrency cap and for cash, so portfolio-level figures
+# (final equity, max drawdown) are NOT comparable to a single run and are
+# deliberately not merged.
+#
+# The per-trade P&L series *is* valid, and that is all the walk-forward
+# robustness check consumes: it scores a time-ordered sequence of outcomes.
+# Chunking also yields far more of them, because trades that a single shared
+# book would have refused for lack of a free slot now get taken.
+
+
+def _chunk_worker(args: tuple) -> tuple[list[float], int, int, int]:
+    """Run one chunk in its own process. Must stay top-level and picklable:
+    Windows spawns rather than forks."""
+    symbols, start, end, capital = args
+    result = run_backtest(list(symbols), start=start, end=end, starting_capital=capital)
+    return result.closed_pnls, result.closed_trades, result.wins, result.losses
+
+
+def run_backtest_chunked(
+    symbols: list[str],
+    *,
+    start: date,
+    end: date,
+    starting_capital: float = 100_000.0,
+    chunk_size: int = 5,
+    workers: int | None = None,
+) -> dict:
+    """Backtest ``symbols`` as several independent books, in parallel.
+
+    Returns the merged trade outcomes only — see the note above on why
+    portfolio-level figures are not merged.
+    """
+    import os as _os
+    from concurrent.futures import ProcessPoolExecutor
+
+    chunks = [symbols[i : i + chunk_size] for i in range(0, len(symbols), chunk_size)]
+    if not chunks:
+        return {"pnls": [], "trades": 0, "wins": 0, "losses": 0, "chunks": 0}
+
+    workers = workers or min(len(chunks), max(1, (_os.cpu_count() or 2)))
+    payload = [(c, start, end, starting_capital) for c in chunks]
+
+    pnls: list[float] = []
+    trades = wins = losses = 0
+    with ProcessPoolExecutor(max_workers=workers) as pool:
+        for chunk_pnls, n, w, l in pool.map(_chunk_worker, payload):
+            pnls.extend(chunk_pnls)
+            trades += n
+            wins += w
+            losses += l
+    return {
+        "pnls": pnls,
+        "trades": trades,
+        "wins": wins,
+        "losses": losses,
+        "chunks": len(chunks),
+        "workers": workers,
+    }

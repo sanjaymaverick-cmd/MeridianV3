@@ -96,3 +96,16 @@ def test_run_backtest_does_not_leak_across_two_isolated_runs(session):
     # Same input data, same starting capital -> deterministic, identical outcome.
     assert result_a.final_equity == result_b.final_equity
     assert result_a.closed_trades == result_b.closed_trades
+
+
+def test_chunked_backtest_handles_an_empty_universe_without_spawning():
+    """Guard the degenerate case: no symbols must return cleanly rather than
+    starting a process pool with nothing to do."""
+    from datetime import date
+
+    from meridian_v3.backtest.engine import run_backtest_chunked
+
+    out = run_backtest_chunked([], start=date(2026, 1, 1), end=date(2026, 2, 1))
+    assert out["trades"] == 0
+    assert out["pnls"] == []
+    assert out["chunks"] == 0

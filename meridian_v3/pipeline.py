@@ -146,6 +146,8 @@ def seed_robustness_from_backtest(
     start: date,
     end: date,
     starting_capital: float = 100_000.0,
+    parallel: bool = True,
+    chunk_size: int = 5,
 ) -> RobustnessSnapshot | None:
     """Replay the real pipeline over history for ``market`` and persist the
     walk-forward verdict, so a cold book isn't permanently penalised.
@@ -154,10 +156,25 @@ def seed_robustness_from_backtest(
     so this reads nothing from and writes nothing to the live book except
     the resulting snapshot row.
     """
-    from meridian_v3.backtest.engine import run_backtest
+    from meridian_v3.backtest.engine import run_backtest, run_backtest_chunked
 
-    result = run_backtest(symbols, start=start, end=end, starting_capital=starting_capital)
-    pnls = result.closed_pnls
+    # Chunked+parallel by default: the walk-forward check consumes a series
+    # of trade outcomes, and several independent books produce far more of
+    # them (and produce them ~cores-times faster) than one book that keeps
+    # refusing trades for want of a free concurrency slot.
+    if parallel and len(symbols) > chunk_size:
+        merged = run_backtest_chunked(
+            symbols, start=start, end=end, starting_capital=starting_capital,
+            chunk_size=chunk_size,
+        )
+        pnls = merged["pnls"]
+        days = 0
+        trades = merged["trades"]
+    else:
+        result = run_backtest(symbols, start=start, end=end, starting_capital=starting_capital)
+        pnls = result.closed_pnls
+        days = result.trading_days_simulated
+        trades = result.closed_trades
     folds = walk_forward_folds(len(pnls))
     is_scores = [hit_rate(pnls[f.train_start : f.train_end]) for f in folds]
     oos_scores = [hit_rate(pnls[f.test_start : f.test_end]) for f in folds]
@@ -165,9 +182,9 @@ def seed_robustness_from_backtest(
     verdict = robustness(is_scores, oos_scores, max_gap=settings.decision.walkforward_oos_gap_max)
 
     reason = (
-        f"{verdict.reason} (Seeded from a backtest of {len(symbols)} {market} symbol(s) over "
-        f"{result.trading_days_simulated} trading days, {len(pnls)} closed trades — not live "
-        "evidence. Live closed trades replace this as soon as there are enough for one fold.)"
+        f"{verdict.reason} (Seeded from a backtest of {len(symbols)} {market} symbol(s), "
+        f"{len(pnls)} closed trades — not live evidence. Live closed trades replace this as "
+        "soon as there are enough for one fold.)"
     )
     row = session.scalar(select(RobustnessSnapshot).where(RobustnessSnapshot.market == market))
     now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -179,7 +196,7 @@ def seed_robustness_from_backtest(
     row.gap = verdict.gap
     row.robust = 1 if verdict.robust else 0
     row.folds = verdict.folds
-    row.trades = len(pnls)
+    row.trades = trades or len(pnls)
     row.reason = reason
     row.source = "backtest"
     row.computed_at = now
