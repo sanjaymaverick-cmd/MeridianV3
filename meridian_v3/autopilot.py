@@ -340,12 +340,24 @@ def _exit_reason(
         return f"Stop hit at ₹{last:,.2f} (line was ₹{line:,.2f})."
     if cache is None:
         return ""
-    if pos.side == "buy" and line and line < pos.avg_price:
-        target = pos.avg_price + 2.0 * (pos.avg_price - line)
-        if last >= target:
-            return f"Target hit at ₹{last:,.2f}."
-    elif pos.side == "buy" and last >= pos.avg_price * 1.03:
-        return f"Target hit at ₹{last:,.2f} (about +3%)."
+    # Target is R multiples of the stop distance, where R = |entry - stop|.
+    # The multiple is `sizing.target_r_multiple` (3.0 = a 3:1 shape) instead
+    # of the 2.0 that used to be hardcoded here.
+    #
+    # The short side is handled explicitly. It used to be missing entirely —
+    # both target branches tested `pos.side == "buy"`, so a short could only
+    # ever leave on a stop or a tape flip and never on reaching its target.
+    # A reward:risk shape that applies to one direction isn't one.
+    r_mult = settings.sizing.target_r_multiple if settings else 3.0
+    if line:
+        risk = abs(pos.avg_price - line)
+        if risk > 0:
+            if pos.side == "buy" and line < pos.avg_price:
+                if last >= pos.avg_price + r_mult * risk:
+                    return f"Target hit at ₹{last:,.2f}."
+            elif pos.side == "sell" and line > pos.avg_price:
+                if last <= pos.avg_price - r_mult * risk:
+                    return f"Target hit at ₹{last:,.2f}."
     bars = list(
         session.scalars(select(PriceBar).where(PriceBar.symbol == pos.symbol).order_by(PriceBar.bar_date.asc()))
     )

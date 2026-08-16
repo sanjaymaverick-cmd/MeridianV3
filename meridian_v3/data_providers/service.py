@@ -442,7 +442,7 @@ def _refresh_binance(session: Session, items, now: datetime, got: set[str]) -> i
                     got.add(item.symbol)
                     marked += 1
             elif item.symbol.endswith(".C") or item.asset_class == "crypto_options":
-                if _copy_cache(session, pair, item.symbol, now, scale=0.03):
+                if _copy_cache(session, pair, item.symbol, now, scale=0.03, delta=0.5):
                     got.add(item.symbol)
                     marked += 1
     return marked
@@ -467,14 +467,35 @@ def _clone_derived(session: Session, names, now: datetime, got: set[str]) -> int
         under = _UNDERLYING.get(item.symbol)
         if not under:
             continue
-        scale = 0.015 if item.symbol.endswith(".C") or item.asset_class == "option" else 1.0
-        if _copy_cache(session, under, item.symbol, now, scale=scale):
+        is_option = item.symbol.endswith(".C") or item.asset_class == "option"
+        scale = 0.015 if is_option else 1.0
+        # Same distinction as the crypto path: an option's *price* is a small
+        # fraction of spot, but its *movement* is delta x the underlying's.
+        delta = 0.5 if is_option else None
+        if _copy_cache(session, under, item.symbol, now, scale=scale, delta=delta):
             got.add(item.symbol)
             marked += 1
     return marked
 
 
-def _copy_cache(session: Session, src: str, dest: str, now: datetime, *, scale: float) -> bool:
+def _copy_cache(
+    session: Session, src: str, dest: str, now: datetime, *, scale: float, delta: float | None = None
+) -> bool:
+    """Derive a cache row from an underlying.
+
+    ``scale`` converts the underlying's *price* (an option premium is
+    roughly ``premium_pct`` of spot). ``delta`` converts its *movement*.
+
+    Those are not the same number, which is what this used to get wrong: ATR
+    was multiplied by ``scale`` along with everything else, so an option came
+    out with the same percentage volatility as its underlying. In reality a
+    premium moves by roughly ``delta x underlying move`` in absolute rupees,
+    and that is a much larger fraction of a small premium — an at-the-money
+    option worth 3% of spot, with a delta near 0.5, swings ~16x as hard in
+    percentage terms as the thing it tracks. Understating that made every
+    option look far too sleepy to clear its own (wide) spread, so none ever
+    passed the reward-to-cost test.
+    """
     source = session.scalar(select(PriceCache).where(PriceCache.symbol == src))
     if source is None or not source.last:
         return False
@@ -490,7 +511,9 @@ def _copy_cache(session: Session, src: str, dest: str, now: datetime, *, scale: 
     cache.low20 = (source.low20 or source.last) * scale
     cache.volume = source.volume
     cache.prev_volume = source.prev_volume
-    cache.atr = (source.atr or source.last * 0.015) * scale
+    src_atr = source.atr or source.last * 0.015
+    # Movement scales with delta; price scales with `scale`.
+    cache.atr = src_atr * (delta if delta is not None else scale)
     cache.as_of = now
     cache.quality = source.quality or "live"
     return True

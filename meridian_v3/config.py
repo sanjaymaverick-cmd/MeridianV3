@@ -110,7 +110,15 @@ class SizingCfg(BaseModel):
     kelly_fraction: float = 0.15
     min_kelly_fraction: float = 0.05
     max_kelly_fraction: float = 0.25
-    atr_stop_mult: float = 1.5
+    # 2.0 x ATR. Wider than the old 1.5 so ordinary chop doesn't take the
+    # trade out before a real move develops -- the desk is hunting moves
+    # several percent wide now, which need room to breathe.
+    atr_stop_mult: float = 2.0
+    # Target as a multiple of the stop distance (R). 3.0 = a 3:1 reward:risk
+    # shape, so with a 2 x ATR stop the target sits 6 x ATR away. Was a
+    # hardcoded 2.0 in autopilot._exit_reason. Breakeven win rate at 3:1 is
+    # 25%, against 33% at the old 2:1.
+    target_r_multiple: float = 3.0
     atr_period: int = 14
     max_risk_pct_high_conf: float = 0.04
     max_risk_pct_normal: float = 0.015
