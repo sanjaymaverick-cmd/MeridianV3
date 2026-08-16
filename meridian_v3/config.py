@@ -46,6 +46,18 @@ class MarketSpec(BaseModel):
     selling_forbidden: bool = False
     min_premium_inr: float = 50.0
     max_premium_pct_of_equity: float = 0.12
+    # Options need their own risk shape. An ATR multiple is the wrong tool
+    # here: a weekly ATM option's daily ATR is ~33% of its premium, so the
+    # universal 2 x ATR stop works out to 67% and the 3:1 target to a 200%
+    # gain. Worse, the sizer used to set the stop to the *entire* premium,
+    # so an option never stopped out until it was worthless -- while the
+    # decision gate was modelling a 67% loss. The two disagreed.
+    #
+    # A long option's loss is bounded at 100% of premium (this book never
+    # sells premium), so the stop is expressed as a fraction of it. At 0.50
+    # the target is 3 x that = a 150% gain, which is a real move for an
+    # option and clears the ~11.5% cost hurdle several times over.
+    stop_pct_of_premium: float = 0.50
     nano_lots: bool = False
     micro_lots: bool = False
     standard_lots_forbidden: bool = False

@@ -115,7 +115,15 @@ def size_position(
         )
 
     if market == "options_buy":
-        prem_cap = equity * settings.markets.options_buy.max_premium_pct_of_equity
+        spec = settings.markets.options_buy
+        stop_pct = max(1e-6, min(1.0, spec.stop_pct_of_premium))
+        # The premium ceiling is whichever is tighter: the explicit cap, or
+        # the premium at which a stop-out costs exactly the normal risk
+        # budget. Without the second term a 12%-of-equity premium at a 50%
+        # stop risks 6% of the book on one clip, against a 1.5% cap
+        # everywhere else on the desk.
+        risk_implied_cap = risk_rupees / stop_pct
+        prem_cap = min(equity * spec.max_premium_pct_of_equity, risk_implied_cap)
         qty = 1.0 if price <= min(max_notional, prem_cap) else 0.0
         if qty <= 0:
             return SizePlan(
@@ -123,10 +131,15 @@ def size_position(
                 "Option premium does not fit the ₹50,000 book. Options buying only, and only a small premium.",
                 True,
             )
+        # Stop is rupees of room, as everywhere else — a fraction of premium
+        # rather than the whole of it, so an option can be cut before it is
+        # worthless and the modelled loss matches the real one.
+        stop_room = price * stop_pct
         return SizePlan(
-            qty, price, min(price, risk_rupees), risk_pct, kelly.sized, price,
+            qty, price, min(stop_room, risk_rupees), risk_pct, kelly.sized, stop_room,
             market, "intraday",
-            f"One option lot. Premium ₹{price:,.0f}. Buying only — never selling premium on this book.",
+            f"One option lot. Premium ₹{price:,.0f}, stop at −{stop_pct:.0%} of it. "
+            "Buying only — never selling premium on this book.",
             False,
         )
 
