@@ -32,11 +32,13 @@ markets:
     - forex_micro
   equity_cash:
     enabled: true
+    max_concurrent: 5
     home: true
     lot_step: 1
     min_notional: 1
   options_buy:
     enabled: true
+    max_concurrent: 2
     buying_only: true
     selling_forbidden: true
     min_premium_inr: 50
@@ -46,29 +48,34 @@ markets:
     stop_pct_of_premium: 0.50
   india_futures:
     enabled: true
+    max_concurrent: 2
     min_lot: 0.05
     lot_step: 0.05
     margin_pct: 0.10
     contract_size: 65
   global_commodities:
     enabled: true
+    max_concurrent: 3
     min_lot: 0.01
     lot_step: 0.01
     margin_pct: 0.10
     min_notional: 200
   crypto_spot:
     enabled: true
+    max_concurrent: 4
     lot_step: 0.0001
     min_lot: 0.0001
     min_notional: 200
   crypto_futures:
     enabled: true
+    max_concurrent: 1
     lot_step: 0.0001
     min_lot: 0.0001
     max_leverage: 2.0
     margin_pct: 0.50
   crypto_options:
     enabled: true
+    max_concurrent: 1
     buying_only: true
     selling_forbidden: true
     lot_step: 0.001
@@ -76,6 +83,7 @@ markets:
     premium_pct: 0.03
   forex_micro:
     enabled: true
+    max_concurrent: 3
     nano_lots: true
     micro_lots: true
     standard_lots_forbidden: true
@@ -102,8 +110,12 @@ sizing:
   high_confidence: 0.78
   live_confidence: 0.82
   positional_confidence: 0.88
-  max_concurrent_normal: 8
-  max_concurrent_high: 10
+  # Backstop against fragmentation across the whole book, not the primary
+  # concentration control -- that is per market (markets.<name>.max_concurrent).
+  # A single global count weighed a Rs189 clip and a Rs17,943 one the same,
+  # and let one sleeve veto another.
+  max_concurrent_normal: 18
+  max_concurrent_high: 22
   max_position_pct: 0.18
   cash_reserve_pct: 0.10
   stop_distance_ratio_ceiling: 0.45

@@ -88,6 +88,7 @@ def size_position(
     market: str = "equity_cash",
     lot_step: float = 1.0,
     open_count: int = 0,
+    market_open_count: int = 0,
 ) -> SizePlan:
     if price <= 0 or equity <= 0:
         return SizePlan(0, 0, 0, 0, 0, 0, market, "intraday", "No price or no book.", True)
@@ -115,12 +116,27 @@ def size_position(
     risk_rupees = max(settings.sizing.min_risk_inr, equity * risk_pct)
     max_notional = min(spendable, equity * settings.sizing.max_position_pct)
 
+    # Two ceilings, checked in order. `market_open_count` is this market's
+    # own tally and is what normally binds; `open_count` is the whole book's
+    # and is only a backstop. A single global count used to be the sole
+    # control, which let nine crypto clips and four commodities veto all 90
+    # Indian equity symbols — sleeves that share no session, no cost
+    # structure and no risk driver.
     high = confidence >= settings.sizing.high_confidence
+    spec = getattr(settings.markets, market, None)
+    per_market = getattr(spec, "max_concurrent", None) if spec is not None else None
+    if per_market is not None and market_open_count >= per_market:
+        return SizePlan(
+            0, 0, 0, risk_pct, kelly.sized, 0, market, "intraday",
+            f"Already {market_open_count} open {market} clip(s), the limit for this market. "
+            "Other markets are unaffected.",
+            True,
+        )
     max_open = settings.sizing.max_concurrent_high if high else settings.sizing.max_concurrent_normal
     if open_count >= max_open:
         return SizePlan(
             0, 0, 0, risk_pct, kelly.sized, 0, market, "intraday",
-            f"Already {open_count} open clips. Wait — the book is full enough.",
+            f"Already {open_count} open clips across the whole book. Wait — the book is full enough.",
             True,
         )
 

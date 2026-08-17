@@ -10,7 +10,7 @@ This account is small. Costs and one bad day matter.
 | Soft shrink | from 8% | Size fades linearly toward the pause. |
 | Cash reserve | 10% | Never spend the last ₹5,000 of a ₹50,000 book. |
 | Daily live cap | 3 / 6 | 3 normal, 6 only on very high-confidence days. |
-| Concurrent | 8 / 10 | More only when confidence is high and cash remains. |
+| Concurrent | 18 / 22 | A book-wide backstop. The real ceiling is per market — equity 5, crypto 4, commodities 3, forex 3, futures/options 2, crypto derivatives 1 — so one full sleeve cannot veto another. |
 | Overnight | options off; FX / commodities follow their own clock | India intraday flattened ~20 minutes before 15:30 IST. Crypto never flattens for session (24/7). FX flattens near Friday 17:00 ET. Global commodities follow the CME/ICE halt. Equity CNC may stay. |
 | Options | buy only | Selling premium is a hard reject. |
 | Forex | nano/micro | Standard lots forbidden. |

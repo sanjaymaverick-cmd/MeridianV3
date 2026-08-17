@@ -293,3 +293,67 @@ def test_contract_markets_report_units_not_just_lots():
         settings=s, market="equity_cash", open_count=0,
     )
     assert (eq.units or eq.qty) == eq.qty
+
+
+def test_one_full_market_does_not_veto_another():
+    """Concurrency is capped per market, not as one global headcount.
+
+    Observed live: nine crypto clips and four commodities filled a global
+    cap of 8, which blocked all 90 Indian equity symbols from opening at the
+    NSE bell. Those sleeves share no session, no cost structure (2.24% vs
+    0.46% round trip) and no risk driver, so one filling up is not a reason
+    to refuse the other.
+    """
+    from meridian_v3.capital.sizer import size_position
+    from meridian_v3.config import Settings
+    from meridian_v3.engine.drawdown import assess_drawdown
+
+    s = Settings()
+    equity = 100_000.0
+
+    def _plan(market: str, price: float, atr: float, market_open: int, book_open: int):
+        return size_position(
+            equity=equity, cash=equity, price=price, atr=atr,
+            p_success=0.62, payoff=1.4, confidence=0.70,
+            drawdown=assess_drawdown(equity, equity),
+            settings=s, market=market, open_count=book_open,
+            market_open_count=market_open,
+        )
+
+    crypto_cap = s.markets.crypto_spot.max_concurrent
+    # Crypto full, equity empty: equity must still be allowed through.
+    equity_plan = _plan("equity_cash", 1_400.0, 28.0, market_open=0, book_open=crypto_cap + 4)
+    assert not equity_plan.blocked, equity_plan.reason
+
+    # ...and crypto itself is correctly refused, naming its own market.
+    crypto_plan = _plan("crypto_spot", 60_000.0, 1_200.0, market_open=crypto_cap, book_open=crypto_cap)
+    assert crypto_plan.blocked
+    assert "crypto_spot" in crypto_plan.reason
+
+
+def test_the_global_cap_still_backstops_the_whole_book():
+    """Per-market caps sum above the global figure, so the book-wide ceiling
+    has to keep working as a backstop against total fragmentation."""
+    from meridian_v3.capital.sizer import size_position
+    from meridian_v3.config import Settings
+    from meridian_v3.engine.drawdown import assess_drawdown
+
+    s = Settings()
+    equity = 100_000.0
+    plan = size_position(
+        equity=equity, cash=equity, price=1_400.0, atr=28.0,
+        p_success=0.62, payoff=1.4, confidence=0.70,
+        drawdown=assess_drawdown(equity, equity),
+        settings=s, market="equity_cash",
+        open_count=s.sizing.max_concurrent_normal,  # book full
+        market_open_count=0,                        # but this market is empty
+    )
+    assert plan.blocked
+    assert "whole book" in plan.reason
+
+    per_market = sum(
+        getattr(s.markets, m).max_concurrent or 0
+        for m in ("equity_cash", "crypto_spot", "global_commodities", "forex_micro",
+                  "india_futures", "options_buy", "crypto_futures", "crypto_options")
+    )
+    assert per_market > s.sizing.max_concurrent_normal, "backstop must be able to bind"
