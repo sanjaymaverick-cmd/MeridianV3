@@ -79,8 +79,13 @@ markets:
     nano_lots: true
     micro_lots: true
     standard_lots_forbidden: true
-    min_lot: 0.01
+    # An FX standard lot is 100,000 units of the base currency; 0.001 lots
+    # is a nano lot (100 units). min_lot used to be read as raw units, which
+    # made every FX clip worth about one rupee.
+    min_lot: 0.001
+    lot_step: 0.001
     standard_lot_qty: 1.0
+    contract_size: 100000
 
 sizing:
   kelly_fraction: 0.15

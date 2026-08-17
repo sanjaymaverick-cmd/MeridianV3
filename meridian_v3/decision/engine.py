@@ -159,19 +159,32 @@ def decide(inp: DecisionInput, settings: Settings | None = None) -> AutoDecision
         action = "hold"
         reasons.append(size.reason)
 
-    paper_margin = max(settings.decision.edge_safety_margin * inp.equity * 0.25, 2.0)
-    if size.qty > 0:
+    # The safety pad scales with the clip, not with the book. It used to be
+    # `edge_safety_margin * equity * 0.25` — a flat ₹37.50 on a ₹100,000 book
+    # applied identically to a ₹18,000 position and a ₹1,000 one. That is the
+    # same defect the cost model had before it was sized on the position: an
+    # absolute hurdle makes small clips arithmetically unable to pass, however
+    # good the signal. It is what blocked forex outright — 122 signals cleared
+    # the meta-label and every one died here.
+    # Price-units, not lots. A contract market quotes `qty` in lots — one FX
+    # lot is 100,000 units of base currency — so multiplying per-unit figures
+    # by `qty` understated an FX clip by 100,000x. Every per-unit number
+    # below (win, loss, cost, exposure) is scaled by units instead.
+    units = size.units or size.qty
+    notional = units * inp.price if units > 0 else inp.price
+    paper_margin = max(settings.decision.edge_safety_margin * notional, 2.0)
+    if units > 0:
         # Real costs on the real position, from the same contract-note
         # calculator that bills the fill (levy) — not a flat percentage of
         # one unit's price, and no STT on crypto/forex.
         position_costs = estimate_trade_costs(
-            qty=size.qty,
+            qty=units,
             price=inp.price,
             market=route.market,
             product="MIS" if size.horizon == "intraday" else "CNC",
         )
-        win_total = inp.win_rupees * size.qty
-        loss_total = inp.loss_rupees * size.qty
+        win_total = inp.win_rupees * units
+        loss_total = inp.loss_rupees * units
     else:
         # Nothing sized (already blocked above) — keep the per-unit shape so
         # the reason string still reads sensibly instead of dividing by zero.
@@ -199,11 +212,11 @@ def decide(inp: DecisionInput, settings: Settings | None = None) -> AutoDecision
     # lenient on a commodity (~0.047% round trip) and demanding on a coin
     # (~2.236%), which is exactly the intent.
     multiple = settings.decision.min_reward_cost_multiple
-    if action != "hold" and multiple > 0 and size.qty > 0:
+    if action != "hold" and multiple > 0 and units > 0:
         hurdle = position_costs.total * multiple
         if win_total < hurdle:
             action = "hold"
-            notional = size.qty * inp.price
+            notional = units * inp.price
             reasons.append(
                 f"Target ₹{win_total:,.0f} is under {multiple:g}x the round-trip cost "
                 f"₹{position_costs.total:,.0f} on a ₹{notional:,.0f} clip. "

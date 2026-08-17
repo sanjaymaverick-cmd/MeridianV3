@@ -108,12 +108,20 @@ class MarketsCfg(BaseModel):
         )
     )
     forex_micro: MarketSpec = Field(
+        # `contract_size` is what a lot of 1.0 actually is: an FX standard
+        # lot is 100,000 units of the base currency. Without it the sizer
+        # read `min_lot=0.01` as 0.01 *units* — a USDINR clip of ₹0.84 —
+        # and no edge on that could ever clear the safety pad, so forex
+        # never took a single trade. 0.001 lots is a nano lot (100 units),
+        # ~₹8,400 on USDINR, which a book this size can actually hold.
         default_factory=lambda: MarketSpec(
             nano_lots=True,
             micro_lots=True,
             standard_lots_forbidden=True,
-            min_lot=0.01,
+            min_lot=0.001,
+            lot_step=0.001,
             standard_lot_qty=1.0,
+            contract_size=100_000.0,
         )
     )
 
