@@ -10,6 +10,8 @@ Combines:
 
 from __future__ import annotations
 
+import math
+
 from dataclasses import dataclass
 
 from meridian_v3.config import Settings, get_settings
@@ -30,6 +32,14 @@ class SizePlan:
     horizon: str
     reason: str
     blocked: bool
+    # Price-units the clip represents. For most markets this equals `qty`,
+    # but a contract market quotes `qty` in *lots*: one FX lot is 100,000
+    # units of base currency, one India mini-future lot is 65. `decide()`
+    # multiplies per-unit win/loss/cost figures by this, so conflating the
+    # two understated an FX clip by 100,000x and left every forex signal
+    # stranded behind the edge filter's absolute floor. Defaults to 0.0,
+    # which callers read as "same as qty".
+    units: float = 0.0
 
 
 def stop_price(side: str, entry: float, stop: float, settings: Settings | None = None) -> float:
@@ -219,6 +229,7 @@ def size_position(
             f"{lots:g} India mini-future lot(s). Margin about ₹{margin:,.0f} "
             f"(full exchange lots are too big for this book).",
             False,
+            units=lots * contract,
         )
 
     if market == "global_commodities":
@@ -237,20 +248,45 @@ def size_position(
         )
 
     if market == "forex_micro":
-        lot = settings.markets.forex_micro.min_lot
-        notional = lot * price
-        if notional > max_notional:
+        spec = settings.markets.forex_micro
+        # A lot of 1.0 is `contract_size` units of the base currency (100,000
+        # for FX). This used to read `min_lot` as raw units and hand back a
+        # fixed 0.01-unit clip — ₹0.84 of USDINR — regardless of equity,
+        # confidence or edge. Nothing that small can clear a safety pad, so
+        # forex never took a trade in five years of backtest.
+        per_lot = spec.contract_size * price
+        stop_room = atr * settings.sizing.atr_stop_mult
+        risk_per_lot = spec.contract_size * stop_room
+        if per_lot <= 0 or risk_per_lot <= 0:
+            return SizePlan(
+                0, 0, 0, risk_pct, kelly.sized, 0, market, "intraday",
+                "No usable FX price or ATR for sizing.", True,
+            )
+
+        # Sized by risk like every other market, then held under whichever
+        # cap binds first: cash on hand, the per-position ceiling, or the
+        # standard-lot ban.
+        lots = min(risk_rupees / risk_per_lot, max_notional / per_lot)
+        step = spec.lot_step or spec.min_lot
+        lots = math.floor(lots / step) * step
+        ceiling = spec.standard_lot_qty - step if spec.standard_lots_forbidden else lots
+        lots = min(lots, ceiling)
+
+        if lots < spec.min_lot or spec.min_lot * per_lot > max_notional:
             return SizePlan(
                 0, 0, 0, risk_pct, kelly.sized, 0, market, "intraday",
                 "Even a nano lot is too large for cash on hand.",
                 True,
             )
+        notional = lots * per_lot
         return SizePlan(
-            lot, notional, risk_rupees, risk_pct, kelly.sized, atr * settings.sizing.atr_stop_mult,
+            lots, notional, lots * risk_per_lot, risk_pct, kelly.sized, stop_room,
             market, "intraday",
-            f"Forex nano/micro only: {lot:g} lot. Standard lots are forbidden. "
+            f"Forex nano/micro only: {lots:g} lot ({lots * spec.contract_size:,.0f} units, "
+            f"₹{notional:,.0f}). Standard lots are forbidden. "
             f"FX runs Sunday–Friday, including after the NSE close.",
             False,
+            units=lots * spec.contract_size,
         )
 
     atr_plan = atr_quantity(
