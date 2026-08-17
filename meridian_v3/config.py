@@ -70,6 +70,13 @@ class MarketSpec(BaseModel):
     max_leverage: float = 2.0
     contract_size: float = 1.0
     premium_pct: float = 0.03
+    # Concurrent open clips allowed in THIS market. The cap used to be a
+    # single global count across every sleeve, which meant nine crypto
+    # positions and four commodities could veto all 90 Indian equity
+    # symbols — books that share no session, no cost structure (2.24% vs
+    # 0.46% round trip) and no risk driver. None = fall back to the global
+    # `sizing.max_concurrent_*` figure.
+    max_concurrent: int | None = None
 
 
 class MarketsCfg(BaseModel):
@@ -86,25 +93,26 @@ class MarketsCfg(BaseModel):
             "forex_micro",
         ]
     )
-    equity_cash: MarketSpec = Field(default_factory=lambda: MarketSpec(home=True))
+    equity_cash: MarketSpec = Field(default_factory=lambda: MarketSpec(home=True, max_concurrent=5))
     options_buy: MarketSpec = Field(
-        default_factory=lambda: MarketSpec(buying_only=True, selling_forbidden=True)
+        default_factory=lambda: MarketSpec(buying_only=True, selling_forbidden=True, max_concurrent=2)
     )
     india_futures: MarketSpec = Field(
-        default_factory=lambda: MarketSpec(min_lot=0.05, lot_step=0.05, margin_pct=0.10, contract_size=65)
+        default_factory=lambda: MarketSpec(min_lot=0.05, lot_step=0.05, margin_pct=0.10, contract_size=65, max_concurrent=2)
     )
     global_commodities: MarketSpec = Field(
-        default_factory=lambda: MarketSpec(min_lot=0.01, lot_step=0.01, margin_pct=0.10, min_notional=200)
+        default_factory=lambda: MarketSpec(min_lot=0.01, lot_step=0.01, margin_pct=0.10, min_notional=200, max_concurrent=3)
     )
     crypto_spot: MarketSpec = Field(
-        default_factory=lambda: MarketSpec(lot_step=0.0001, min_lot=0.0001, min_notional=200)
+        default_factory=lambda: MarketSpec(lot_step=0.0001, min_lot=0.0001, min_notional=200, max_concurrent=4)
     )
     crypto_futures: MarketSpec = Field(
-        default_factory=lambda: MarketSpec(lot_step=0.0001, min_lot=0.0001, max_leverage=2.0, margin_pct=0.50)
+        default_factory=lambda: MarketSpec(lot_step=0.0001, min_lot=0.0001, max_leverage=2.0, margin_pct=0.50, max_concurrent=1)
     )
     crypto_options: MarketSpec = Field(
         default_factory=lambda: MarketSpec(
-            buying_only=True, selling_forbidden=True, lot_step=0.001, min_lot=0.001, premium_pct=0.03
+            buying_only=True, selling_forbidden=True, lot_step=0.001, min_lot=0.001, premium_pct=0.03,
+            max_concurrent=1
         )
     )
     forex_micro: MarketSpec = Field(
@@ -122,6 +130,7 @@ class MarketsCfg(BaseModel):
             lot_step=0.001,
             standard_lot_qty=1.0,
             contract_size=100_000.0,
+            max_concurrent=3,
         )
     )
 
@@ -147,10 +156,14 @@ class SizingCfg(BaseModel):
     high_confidence: float = 0.78
     live_confidence: float = 0.82
     positional_confidence: float = 0.88
-    # Concentration over breadth: fewer, more convicted clips rather than a
-    # thin slice of everything that clears the bar. Was 16/20.
-    max_concurrent_normal: int = 8
-    max_concurrent_high: int = 10
+    # A backstop against pathological fragmentation across the whole book,
+    # not the primary concentration control — that is now per market
+    # (`markets.<name>.max_concurrent`). A single global count was the wrong
+    # instrument twice over: it weighs a Rs189 clip and a Rs17,943 one
+    # identically (a 95x spread, one slot each), and it let one sleeve veto
+    # another. Per-market caps sum to 21, so this rarely binds.
+    max_concurrent_normal: int = 18
+    max_concurrent_high: int = 22
     max_position_pct: float = 0.18
     cash_reserve_pct: float = 0.10
     # 2.9 — stop_price() uses this to tell an ATR *distance* apart from an

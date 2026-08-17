@@ -465,6 +465,18 @@ def run_cycle(
     open_paper = session.scalar(
         select(func.count(Position.id)).where(Position.venue == "paper", Position.status == "open")
     ) or 0
+    # Per-market tallies alongside the book-wide one. The concurrency ceiling
+    # is primarily per market now (`markets.<name>.max_concurrent`), so that
+    # one sleeve being full cannot veto another — nine crypto clips used to
+    # block all 90 Indian equity symbols.
+    open_by_market: dict[str, int] = {
+        m: int(n)
+        for m, n in session.execute(
+            select(Position.market, func.count(Position.id))
+            .where(Position.venue == "paper", Position.status == "open")
+            .group_by(Position.market)
+        ).all()
+    }
 
     # 2.6 — the only record of what a cycle did used to be a DeskEvent row
     # per symbol; nothing summarized it anywhere an operator could grep.
@@ -596,6 +608,7 @@ def run_cycle(
                 live_armed=armed,
                 live_today=int(live_today),
                 open_count=int(open_paper),
+                market_open_count=open_by_market.get(market, 0),
                 preferred_market=market,
                 now=now,
                 belief=_belief(session, market),
@@ -673,6 +686,10 @@ def run_cycle(
             settings=settings,
             market=decision.market,
             open_count=int(open_paper),
+            # `decision.market`, not the scoring loop's `market` — this is a
+            # separate pass over `ranked`, where that variable still holds
+            # whatever the last scored symbol left in it.
+            market_open_count=open_by_market.get(decision.market, 0),
         )
         if fresh.blocked or fresh.qty <= 0:
             holds += 1
@@ -681,6 +698,7 @@ def run_cycle(
         oms.execute(decision)
         opened += 1
         open_paper += 1
+        open_by_market[decision.market] = open_by_market.get(decision.market, 0) + 1
         paper_acct.cash = broker.funds()
         paper_clips.append(f"{item.symbol} {decision.action} {fresh.qty:g}")
         if decision.live:

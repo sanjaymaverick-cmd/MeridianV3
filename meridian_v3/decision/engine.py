@@ -45,6 +45,9 @@ class DecisionInput:
     live_armed: bool
     live_today: int
     open_count: int
+    # Open clips in the routed market alone. Defaults to 0 so existing
+    # callers keep working; the per-market ceiling then never binds for them.
+    market_open_count: int = 0
     # Part 3 item 3 — rupee-per-day kill switch. "Loss so far today" for the
     # venue this decision is being scored against (paper or live, mirroring
     # how `drawdown` is already selected per-venue in pipeline.run_cycle).
@@ -154,6 +157,7 @@ def decide(inp: DecisionInput, settings: Settings | None = None) -> AutoDecision
         settings=settings,
         market=route.market,
         open_count=inp.open_count,
+        market_open_count=inp.market_open_count,
     )
     if size.blocked and action != "hold":
         action = "hold"

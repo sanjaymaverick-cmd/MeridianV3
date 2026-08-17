@@ -52,7 +52,7 @@ def test_safety_doc_concurrency_matches_config():
     settings = get_settings()
     text = _read(SAFETY_DOC)
     expected = f"{settings.sizing.max_concurrent_normal} / {settings.sizing.max_concurrent_high}"
-    assert expected == "8 / 10"  # sanity: matches config/default.yaml today
+    assert expected == "18 / 22"  # sanity: matches config/default.yaml today
     assert expected in text, (
         f"docs/07-safety.md's concurrency figures no longer match "
         f"sizing.max_concurrent_normal/max_concurrent_high ({expected})"
